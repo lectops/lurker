@@ -19,7 +19,8 @@ open output/report.html
 
 ## Reading the report
 
-- **Closeness** = largest person box as a fraction of one camera view. Roughly: >0.15 someone at the car, 0.06 to 0.15 close by, <0.03 passing in the aisle.
+- **Closeness** = largest box as a fraction of one camera view. People: >0.15 at the car, 0.06 to 0.15 close by. Vehicles only count when pixels inside the box actually change (parked cars are ignored).
+- **Show** filters people vs moving vehicles. **Camera**: "Sides + rear" are the fisheyes hugging the car; "Front" is the aisle, mostly routine passing traffic.
 - `cams` line shows `camera maxArea/framesWithPerson` for every camera that saw someone.
 - **likely you**: clip within 3 min before a drive starts or after one ends (from dashcam segment times). Dashcam history is a rolling buffer, so older clips won't be tagged.
 - Click a thumbnail to play the clip. "Reviewed" marks persist in browser storage.

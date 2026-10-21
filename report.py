@@ -36,6 +36,8 @@ button {{ font:inherit; font-size:12px; padding:3px 8px; border:1px solid var(--
 </style></head><body>
 <header>
   <h1>Sentry review</h1>
+  <label>Show <select id="kind"><option value="all">All</option><option value="person">People</option><option value="vehicle">Vehicles (moving)</option></select></label>
+  <label>Camera <select id="camf"><option value="all">All</option><option value="sides">Sides + rear</option><option value="front">Front</option></select></label>
   <label>Min closeness <input id="min" type="range" min="0" max="0.4" step="0.01" value="{default_min}"><span id="minv"></span></label>
   <label><input id="hide" type="checkbox" checked> Hide reviewed</label>
   <label><input id="hideOwner" type="checkbox"> Hide likely-you (near a drive)</label>
@@ -48,19 +50,30 @@ const KEY = "sentry-reviewed";
 let reviewed = {{}};
 try {{ reviewed = JSON.parse(localStorage.getItem(KEY) || "{{}}"); }} catch (e) {{}}
 const save = () => {{ try {{ localStorage.setItem(KEY, JSON.stringify(reviewed)); }} catch (e) {{}} }};
-const grid = document.getElementById("grid"), min = document.getElementById("min"), hide = document.getElementById("hide"), hideOwner = document.getElementById("hideOwner");
+const grid = document.getElementById("grid"), min = document.getElementById("min"), hide = document.getElementById("hide"), hideOwner = document.getElementById("hideOwner"), kind = document.getElementById("kind"), camf = document.getElementById("camf");
 const cls = s => s >= 0.15 ? "hot" : s >= 0.06 ? "warm" : "";
+// pick which detection (person / vehicle) a card shows under the current filter
+const pick = d => {{
+  const kinds = kind.value === "all" ? ["person", "vehicle"] : [kind.value];
+  const groups = camf.value === "all" ? ["sides", "front"] : [camf.value];
+  const ks = kinds.flatMap(k => groups.map(g => k + "/" + g)).filter(k => d[k]);
+  if (!ks.length) return null;
+  const k = ks.reduce((a, b) => d[a].score >= d[b].score ? a : b);
+  return {{k: k.split("/")[0], ...d[k]}};
+}};
 function render() {{
   const m = +min.value; document.getElementById("minv").textContent = m.toFixed(2);
-  const rows = DATA.filter(d => d.score >= m && !(hide.checked && reviewed[d.path]) && !(hideOwner.checked && d.owner));
+  const rows = DATA.map(d => ({{...d, p: pick(d)}}))
+    .filter(d => d.p && d.p.score >= m && !(hide.checked && reviewed[d.path]) && !(hideOwner.checked && d.owner))
+    .sort((a, b) => b.p.score - a.p.score);
   document.getElementById("count").textContent = rows.length + " of " + DATA.length + " clips";
   grid.innerHTML = "";
   for (const d of rows) {{
     const el = document.createElement("div");
     el.className = "card" + (reviewed[d.path] ? " reviewed" : "");
-    el.innerHTML = `<img loading="lazy" src="${{d.thumb}}" title="Click to play">
+    el.innerHTML = `<img loading="lazy" src="${{d.p.thumb}}" title="Click to play">
       <div class="meta">
-        <div class="row"><span class="when">${{d.when}}</span><span class="score ${{cls(d.score)}}">${{d.score.toFixed(3)}} · ${{d.cam}}</span></div>
+        <div class="row"><span class="when">${{d.when}}</span><span class="score ${{cls(d.p.score)}}">${{d.p.k === "person" ? "person" : "vehicle"}} ${{d.p.score.toFixed(3)}} · ${{d.p.cam}}</span></div>
         <div class="cams">${{d.owner ? `<span class="tag">likely you · ${{d.owner}}</span> ` : ""}}${{d.cams}}</div>
         <div class="row"><span class="path">${{d.name}}</span><button>${{reviewed[d.path] ? "Unmark" : "Reviewed"}}</button></div>
       </div>`;
@@ -75,7 +88,7 @@ function render() {{
     grid.appendChild(el);
   }}
 }}
-min.oninput = render; hide.onchange = render; hideOwner.onchange = render; render();
+min.oninput = render; hide.onchange = render; hideOwner.onchange = render; kind.onchange = render; camf.onchange = render; render();
 </script></body></html>
 """
 
@@ -151,25 +164,29 @@ def main():
     rows = []
     for line in (args.out / "results.jsonl").open():
         r = json.loads(line)
-        if "thumb" not in r:
+        if not r.get("thumbs"):
             continue
         p = Path(r["path"])
         ts = parse_ts(p.name)
         cams = " · ".join(
-            f"{c} {v['max_area']:.2f}/{v['frames']}f" for c, v in r["cams"].items() if v["frames"]
+            f"{c} {k[0]} {v['max_area']:.2f}/{v['frames']}f"
+            for c, kinds in r["cams"].items() for k, v in kinds.items() if v["frames"]
         )
-        rows.append({
+        row = {
             "path": r["path"], "url": p.as_uri(), "name": p.name,
             "when": ts.strftime("%Y-%m-%d %a %H:%M:%S") if ts else p.name,
             "owner": owner_tag(ts, sessions, window) if ts else "",
-            "thumb": r["thumb"], "score": r["best"]["score"], "cam": r["best"]["cam"], "cams": cams,
-        })
-    rows.sort(key=lambda d: d["score"], reverse=True)
+            "cams": cams,
+        }
+        for key, thumb in r["thumbs"].items():  # key like "vehicle/sides"
+            b = r["best"][key]
+            row[key] = {"score": b["score"], "cam": b["cam"], "thumb": thumb}
+        rows.append(row)
     page = PAGE.format(data=json.dumps(rows), default_min=args.min)
     out = args.out / "report.html"
     out.write_text(page)
     print(f"{len(sessions)} drives, {sum(1 for d in rows if d['owner'])} clips tagged as likely you")
-    print(f"{len(rows)} clips with people -> {out}")
+    print(f"{len(rows)} clips with a person or moving vehicle -> {out}")
 
 
 if __name__ == "__main__":
