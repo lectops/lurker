@@ -61,3 +61,8 @@ Pins live in browser storage: use Export / Import in the Places panel to back th
 - `--conf` (default 0.3): lower catches more distorted fisheye people, more false positives.
 - `--model yolo26s.pt`: ~2x faster, less accurate.
 - `--thumb-min-area` (default 0.03): clips below this are recorded but left out of the report.
+
+## License
+
+AGPL-3.0, matching [Ultralytics YOLO](https://github.com/ultralytics/ultralytics), which this depends on.
+Your footage, results and thumbnails stay local: `output*/` is gitignored.
