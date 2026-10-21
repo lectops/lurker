@@ -97,27 +97,48 @@ def confirmed_people(pdets, min_conf: float):
     return pdets
 
 
-def box_motion(frames, cam: str, fi: int, box) -> float:
-    """Fraction of pixels inside the box that changed vs the adjacent sampled frames."""
+def box_motion(frames, cam: str, fi: int, box, people) -> float:
+    """Fraction of pixels inside the box that changed vs the adjacent sampled frames.
+
+    Pixels covered by a person (in either frame) are ignored, so someone walking in front
+    of a parked car doesn't make the car look like it moved.
+    """
     _, x, y = next(c for c in CAMS if c[0] == cam)
     x1, y1, x2, y2 = (int(v) for v in box)
     if x2 - x1 < 2 or y2 - y1 < 2:
         return 0.0
     gray = lambda f: cv2.GaussianBlur(
         cv2.cvtColor(frames[f][y + y1 : y + y2, x + x1 : x + x2], cv2.COLOR_BGR2GRAY), (5, 5), 0)
-    cur = gray(fi)
-    return max(
-        (float((cv2.absdiff(cur, gray(n)) > 25).mean()) for n in (fi - 1, fi + 1) if 0 <= n < len(frames)),
-        default=0.0,
-    )
+
+    def person_mask(f):
+        m = np.zeros((y2 - y1, x2 - x1), bool)
+        for pb in people.get(f, ()):
+            px1, py1, px2, py2 = (int(v) for v in pb)
+            m[max(py1 - y1, 0) : max(py2 - y1, 0), max(px1 - x1, 0) : max(px2 - x1, 0)] = True
+        return m
+
+    cur, cur_mask = gray(fi), person_mask(fi)
+    best = 0.0
+    for n in (fi - 1, fi + 1):
+        if not 0 <= n < len(frames):
+            continue
+        keep = ~(cur_mask | person_mask(n))
+        if keep.mean() < 0.3:
+            continue  # mostly hidden behind a person: can't tell
+        changed = cv2.absdiff(cur, gray(n)) > 25
+        best = max(best, float(changed[keep].mean()))
+    return best
 
 
-def moving_vehicles(vdets, frames, cam: str, min_conf: float, min_motion: float):
+def moving_vehicles(vdets, pdets, frames, cam: str, min_conf: float, min_motion: float):
     """Drop parked vehicles. Fisheye boxes wobble even on parked cars, so we look at pixel
     change inside the box instead: parked cars stay under ~0.06, moving ones go 0.3+."""
+    people = {}
+    for fi, b, _ in pdets:
+        people.setdefault(fi, []).append(b)
     return [
         (fi, b, cf) for fi, b, cf in vdets
-        if cf >= min_conf and area(b) < 0.7 and box_motion(frames, cam, fi, b) >= min_motion
+        if cf >= min_conf and area(b) < 0.7 and box_motion(frames, cam, fi, b, people) >= min_motion
     ]
 
 
@@ -129,8 +150,10 @@ def scan_clip(model, frames, args):
     # best hit per "kind/camera", e.g. "vehicle/left"
     best = {f"{k}/{c}": {"score": 0.0} for k in KINDS for c, _, _ in CAMS}
     for cam, kinds in dets.items():
+        # mask with every person box (even unconfirmed ones) before filtering people
+        kinds["vehicle"] = moving_vehicles(kinds["vehicle"], kinds["person"], frames, cam,
+                                           args.vehicle_conf, args.min_motion)
         kinds["person"] = confirmed_people(kinds["person"], args.person_conf)
-        kinds["vehicle"] = moving_vehicles(kinds["vehicle"], frames, cam, args.vehicle_conf, args.min_motion)
         for kind, items in kinds.items():
             c = cams[cam][kind]
             c["frames"] = len({fi for fi, _, _ in items})
