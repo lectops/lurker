@@ -1,0 +1,12 @@
+[project]
+name = "byd-sentry-gnodin"
+version = "0.1.0"
+description = "Find BYD sentry clips where people came close to the car"
+readme = "README.md"
+authors = [
+    { name = "Alec", email = "4496308+lectops@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "ultralytics>=8.4.183",
+]
