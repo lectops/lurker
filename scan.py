@@ -28,13 +28,31 @@ VEHICLES = [2, 3, 5, 7]  # car, motorcycle, bus, truck
 KINDS = ("person", "vehicle")
 
 
-def read_frames(path: Path, fps: float):
-    cmd = [
-        "ffmpeg", "-v", "error", "-hwaccel", "videotoolbox", "-i", str(path),
-        "-vf", f"fps={fps},scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-",
-    ]
-    proc = subprocess.run(cmd, capture_output=True)
-    buf = proc.stdout
+# ffmpeg hardware decoder to use for each torch device
+HWACCEL = {"cuda": "cuda", "mps": "videotoolbox"}
+
+
+def pick_device(name: str = "auto") -> str:
+    if name != "auto":
+        return name
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def read_frames(path: Path, fps: float, hwaccel: str | None = None):
+    def run(accel):
+        cmd = ["ffmpeg", "-v", "error", *(["-hwaccel", accel] if accel else []), "-i", str(path),
+               "-vf", f"fps={fps},scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+        return subprocess.run(cmd, capture_output=True).stdout
+
+    buf = run(hwaccel)
+    if hwaccel and len(buf) < W * H * 3:
+        buf = run(None)  # hardware decode unavailable or failed: fall back to software
     n = len(buf) // (W * H * 3)
     if n == 0:
         return None
@@ -50,7 +68,7 @@ def iou(a, b):
     return inter / (area(a) + area(b) - inter + 1e-9)
 
 
-def detect(model, frames, conf: float, imgsz: int, batch: int):
+def detect(model, frames, conf: float, imgsz: int, batch: int, device: str = "mps"):
     """Return {cam: {kind: [(frame_idx, box, conf), ...]}} for every camera view."""
     crops, index = [], []
     for fi, frame in enumerate(frames):
@@ -61,7 +79,7 @@ def detect(model, frames, conf: float, imgsz: int, batch: int):
     for i in range(0, len(crops), batch):
         results = model.predict(
             crops[i : i + batch], classes=[PERSON, *VEHICLES], conf=conf, imgsz=imgsz,
-            device="mps", verbose=False,
+            device=device, quantize=16 if device == "cuda" else None, verbose=False,
         )
         for (fi, cam), r in zip(index[i : i + batch], results):
             if not len(r.boxes):
@@ -145,7 +163,7 @@ def moving_vehicles(vdets, pdets, frames, cam: str, min_conf: float, min_motion:
 def scan_clip(model, frames, args):
     if frames is None:
         return None, None
-    dets = detect(model, frames, args.conf, args.imgsz, args.batch)
+    dets = detect(model, frames, args.conf, args.imgsz, args.batch, args.device)
     cams = {c: {k: {"max_area": 0.0, "frames": 0} for k in KINDS} for c, _, _ in CAMS}
     # best hit per "kind/camera", e.g. "vehicle/left"
     best = {f"{k}/{c}": {"score": 0.0} for k in KINDS for c, _, _ in CAMS}
@@ -193,7 +211,10 @@ def main():
     ap.add_argument("--min-motion", type=float, default=0.15,
                     help="Fraction of changed pixels inside a vehicle box for it to count as moving")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--device", default="auto", help="auto (cuda > mps > cpu), cuda, mps, cpu")
     args = ap.parse_args()
+    args.device = pick_device(args.device)
+    hwaccel = HWACCEL.get(args.device)
 
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "thumbs").mkdir(exist_ok=True)
@@ -205,18 +226,18 @@ def main():
     clips = sorted(p for p in args.root.glob(args.glob) if str(p) not in done)
     if args.limit:
         clips = clips[: args.limit]
-    print(f"{len(clips)} clips to scan ({len(done)} already done)", file=sys.stderr)
+    print(f"{len(clips)} clips to scan ({len(done)} already done) on {args.device}", file=sys.stderr)
 
     model = YOLO(args.model)
     # decode upcoming clips in background threads while the GPU runs detection
     pool = ThreadPoolExecutor(max_workers=3)
-    pending = [pool.submit(read_frames, c, args.fps) for c in clips[:4]]
+    pending = [pool.submit(read_frames, c, args.fps, hwaccel) for c in clips[:4]]
     t0 = time.time()
     with results_path.open("a") as f:
         for i, clip in enumerate(clips, 1):
             fut = pending.pop(0)
             if i + 3 < len(clips):
-                pending.append(pool.submit(read_frames, clips[i + 3], args.fps))
+                pending.append(pool.submit(read_frames, clips[i + 3], args.fps, hwaccel))
             try:
                 res, frames = scan_clip(model, fut.result(), args)
             except Exception as e:  # keep going on corrupt clips
