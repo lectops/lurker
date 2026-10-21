@@ -1,10 +1,24 @@
-# byd-sentry-gnodin
+# Lurker
 
-Finds BYD sentry clips where a person came close to the parked car, so you only review those.
+Finds the people and cars that got close to your parked car in sentry-mode footage,
+so you only review the clips that matter instead of thousands of aisle-traffic triggers.
 
-Each sentry frame is a 2x2 mosaic (left, rear / front, right). `scan.py` samples 2 fps with
-hardware HEVC decode, splits the four cameras, runs YOLO26 person detection on Apple GPU (MPS),
-and records the largest person box per camera. In the fisheye views, box size is a proxy for distance.
+Runs fully local: YOLO26 for people and vehicles, DINOv2 for recognising parking spots.
+Results go to a single HTML review page with filters (people / moving vehicles, camera,
+place, date range, time of day) and click-to-play clips.
+
+**Supported footage:** BYD sentry clips (`Electro/Sentry`, one mp4 per trigger with a
+2x2 camera mosaic: left, rear / front, right). Other brands need an input adapter.
+
+## How it works
+
+- Samples each clip at 2 fps with hardware HEVC decode and splits the four camera views.
+- **People:** a camera counts only if it sees a confident person (0.65+) in 2+ frames,
+  which filters out dark cars misread as people.
+- **Vehicles:** only *moving* ones count. Fisheye boxes wobble even on parked cars, so
+  movement is measured as pixel change inside the box, ignoring pixels covered by people.
+- **Closeness:** the largest box as a fraction of the camera view. In the side and rear
+  fisheyes this is a good proxy for distance to the car.
 
 ## Usage
 

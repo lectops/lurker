@@ -1,7 +1,7 @@
 [project]
-name = "byd-sentry-gnodin"
+name = "lurker"
 version = "0.1.0"
-description = "Find BYD sentry clips where people came close to the car"
+description = "Find the people and cars that got close to your parked car in sentry-mode footage"
 readme = "README.md"
 license = "AGPL-3.0-only"
 authors = [

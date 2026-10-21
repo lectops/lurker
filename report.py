@@ -13,7 +13,7 @@ import numpy as np
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sentry Review</title>
+<title>Lurker</title>
 <style>
 :root {{ --bg:#f6f6f4; --card:#fff; --fg:#1d1d1b; --muted:#6b6b66; --line:#e2e2dd; --hot:#c8321e; --warm:#c98a12; --accent:#2f6fd0; }}
 @media (prefers-color-scheme: dark) {{ :root {{ --bg:#141413; --card:#1e1e1c; --fg:#ecece8; --muted:#9a9a93; --line:#33332f; --accent:#6ea1f0; }} }}
@@ -52,7 +52,7 @@ button.on {{ border-color:var(--accent); color:var(--accent); }}
 </style></head><body>
 <header>
   <div class="bar">
-    <h1>Sentry review</h1>
+    <h1>Lurker</h1>
     <label>Show <select id="kind">
       <option value="all">All</option><option value="person">People</option><option value="vehicle">Vehicles (moving)</option>
     </select></label>

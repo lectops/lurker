@@ -30,31 +30,6 @@ wheels = [
 ]
 
 [[package]]
-name = "byd-sentry-gnodin"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "scikit-learn" },
-    { name = "torch", version = "2.14.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
-    { name = "torch", version = "2.14.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "sys_platform == 'win32'" },
-    { name = "torchvision", version = "0.29.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
-    { name = "torchvision", version = "0.29.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "sys_platform == 'win32'" },
-    { name = "transformers" },
-    { name = "ultralytics" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "scikit-learn", specifier = ">=1.9.1" },
-    { name = "torch", marker = "sys_platform != 'win32'", specifier = ">=2.14.1" },
-    { name = "torch", marker = "sys_platform == 'win32'", specifier = ">=2.14.1", index = "https://download.pytorch.org/whl/cu126" },
-    { name = "torchvision", marker = "sys_platform != 'win32'", specifier = ">=0.29.1" },
-    { name = "torchvision", marker = "sys_platform == 'win32'", specifier = ">=0.29.1", index = "https://download.pytorch.org/whl/cu126" },
-    { name = "transformers", specifier = ">=5.20.2" },
-    { name = "ultralytics", specifier = ">=8.4.183" },
-]
-
-[[package]]
 name = "certifi"
 version = "2026.10.19"
 source = { registry = "https://pypi.org/simple" }
@@ -725,6 +700,31 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/c4/1407df7512a5b36cc79840e01710dc575733c461b13ab866cae77eaf87f3/kiwisolver-1.5.1-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:482676e5bd48d70ac99d9fc78863469845421e01184fa83f1f9366dc49f7e974", size = 134002, upload-time = "2026-08-28T10:28:08.881Z" },
     { url = "https://files.pythonhosted.org/packages/16/45/c37a21ad5c0ab581a93c55ad544721aaa1f0ae94edb29c6a678a23d013e6/kiwisolver-1.5.1-graalpy312-graalpy250_312_native-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:072bdb15a3c19a5b5dbc8f8fb1f4e1884bf4f3507eeb4cc6334401274d37a5c0", size = 194292, upload-time = "2026-08-28T10:28:11.06Z" },
     { url = "https://files.pythonhosted.org/packages/a6/c1/69f00d627949580e43d57af0aa465df46868d7c29801c137a55374101294/kiwisolver-1.5.1-graalpy312-graalpy250_312_native-win_amd64.whl", hash = "sha256:a5a00665d1a0e26763a7338d7e911d4598fbc1d50dd0d6b7919b7dc6c5d6569f", size = 73362, upload-time = "2026-08-28T10:28:12.449Z" },
+]
+
+[[package]]
+name = "lurker"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "scikit-learn" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
+    { name = "torch", version = "2.14.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.29.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
+    { name = "torchvision", version = "0.29.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "sys_platform == 'win32'" },
+    { name = "transformers" },
+    { name = "ultralytics" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "scikit-learn", specifier = ">=1.9.1" },
+    { name = "torch", marker = "sys_platform != 'win32'", specifier = ">=2.14.1" },
+    { name = "torch", marker = "sys_platform == 'win32'", specifier = ">=2.14.1", index = "https://download.pytorch.org/whl/cu126" },
+    { name = "torchvision", marker = "sys_platform != 'win32'", specifier = ">=0.29.1" },
+    { name = "torchvision", marker = "sys_platform == 'win32'", specifier = ">=0.29.1", index = "https://download.pytorch.org/whl/cu126" },
+    { name = "transformers", specifier = ">=5.20.2" },
+    { name = "ultralytics", specifier = ">=8.4.183" },
 ]
 
 [[package]]
