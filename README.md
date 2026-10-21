@@ -12,6 +12,8 @@ and records the largest person box per camera. In the fisheye views, box size is
 uv sync
 # scan (resumable: re-run the same command to continue)
 uv run python scan.py "/path/to/Electro/Sentry" --out output
+# optional: scene fingerprints for the Place filter (~10 min for the full archive)
+uv run python places.py output
 # build the review page
 uv run python report.py output --drives "/path/to/Electro/Dashcam" "/path/to/360Videos/AccOn_DVR"
 open output/report.html
@@ -24,6 +26,20 @@ open output/report.html
 - `cams` line shows `camera maxArea/framesWithPerson` for every camera that saw someone.
 - **likely you**: clip within 3 min before a drive starts or after one ends (from dashcam segment times). Dashcam history is a rolling buffer, so older clips won't be tagged.
 - Click a thumbnail to play the clip. "Reviewed" marks persist in browser storage.
+
+## Filters
+
+Show (people / moving vehicles), Camera (all, sides + rear, or one camera), Place, Time of day,
+Sort, date range with presets (counted back from the newest clip), min closeness, group by day,
+hide reviewed, hide likely-you. Filter settings and reviewed marks persist in the browser.
+
+## Places
+
+Click 📍 on a clip from a spot you park at often and give it a name ("Home", "Office").
+Every clip whose scene looks similar enough gets that name; everything else is "Other",
+so one-off spots like malls never need tagging. Pin a second example (e.g. a night clip)
+if matching misses some. "Match strictness" in the Places panel sets the cutoff.
+Pins live in browser storage: use Export / Import in the Places panel to back them up.
 
 ## Tuning
 

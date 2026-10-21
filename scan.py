@@ -26,8 +26,6 @@ CAMS = [("left", 0, 0), ("rear", QW, 0), ("front", 0, QH), ("right", QW, QH)]
 PERSON = 0
 VEHICLES = [2, 3, 5, 7]  # car, motorcycle, bus, truck
 KINDS = ("person", "vehicle")
-# front is a normal lens facing the aisle (routine passing traffic); the rest are fisheyes hugging the car
-GROUP = {"left": "sides", "rear": "sides", "right": "sides", "front": "front"}
 
 
 def read_frames(path: Path, fps: float):
@@ -128,8 +126,8 @@ def scan_clip(model, frames, args):
         return None, None
     dets = detect(model, frames, args.conf, args.imgsz, args.batch)
     cams = {c: {k: {"max_area": 0.0, "frames": 0} for k in KINDS} for c, _, _ in CAMS}
-    # best hit per "kind/group", e.g. "vehicle/sides"
-    best = {f"{k}/{g}": {"score": 0.0} for k in KINDS for g in ("sides", "front")}
+    # best hit per "kind/camera", e.g. "vehicle/left"
+    best = {f"{k}/{c}": {"score": 0.0} for k in KINDS for c, _, _ in CAMS}
     for cam, kinds in dets.items():
         kinds["person"] = confirmed_people(kinds["person"], args.person_conf)
         kinds["vehicle"] = moving_vehicles(kinds["vehicle"], frames, cam, args.vehicle_conf, args.min_motion)
@@ -139,7 +137,7 @@ def scan_clip(model, frames, args):
             for fi, box, cf in items:
                 a = area(box)
                 c["max_area"] = max(c["max_area"], round(a, 4))
-                key = f"{kind}/{GROUP[cam]}"
+                key = f"{kind}/{cam}"
                 if a > best[key]["score"]:
                     best[key] = {"score": round(a, 4), "frame": fi, "cam": cam,
                                   "box": box.tolist(), "conf": round(cf, 3)}
@@ -151,7 +149,7 @@ def save_thumb(frames, best, out: Path):
     _, x, y = next(c for c in CAMS if c[0] == best["cam"])
     x1, y1, x2, y2 = (int(v) for v in best["box"])
     cv2.rectangle(frame, (x + x1, y + y1), (x + x2, y + y2), (0, 0, 255), 4)
-    cv2.imwrite(str(out), cv2.resize(frame, (960, 720)), [cv2.IMWRITE_JPEG_QUALITY, 80])
+    cv2.imwrite(str(out), cv2.resize(frame, (720, 540)), [cv2.IMWRITE_JPEG_QUALITY, 75])
 
 
 def main():
@@ -214,7 +212,7 @@ def main():
             f.flush()
             rate = i / (time.time() - t0)
             eta = (len(clips) - i) / rate / 60
-            summary = "  ".join(f"{k}={b['score']:.3f}" for k, b in res.get("best", {}).items())
+            summary = "  ".join(f"{k}={b['score']:.3f}" for k, b in res.get("best", {}).items() if b["score"])
             print(f"[{i}/{len(clips)}] {clip.name} {summary}  {rate:.2f} clips/s  eta {eta:.0f}m",
                   file=sys.stderr)
 
