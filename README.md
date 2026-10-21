@@ -8,16 +8,31 @@ and records the largest person box per camera. In the fisheye views, box size is
 
 ## Usage
 
+Same commands on macOS and Windows. The device is picked automatically
+(CUDA > Apple GPU > CPU); override with `--device`.
+
 ```sh
 uv sync
-# scan (resumable: re-run the same command to continue)
-uv run python scan.py "/path/to/Electro/Sentry" --out output
-# optional: scene fingerprints for the Place filter (~10 min for the full archive)
-uv run python places.py output
-# build the review page
-uv run python report.py output --drives "/path/to/Electro/Dashcam" "/path/to/360Videos/AccOn_DVR"
-open output/report.html
+# whole pipeline: scan -> place fingerprints -> report (resumable: re-run to continue)
+uv run python run.py "<...>/Electro/Sentry" --out output --drives "<...>/Electro/Dashcam"
+# only some clips, e.g. 2025
+uv run python run.py "<...>/Electro/Sentry" --glob "2025-*/**/*.mp4" --out output-2025
 ```
+
+Or run the steps yourself: `scan.py`, then `places.py`, then `report.py`.
+
+## Windows + NVIDIA setup (one-time)
+
+```powershell
+winget install astral-sh.uv
+winget install Gyan.FFmpeg        # includes NVIDIA hardware decoding
+# new terminal, then in the repo folder:
+uv sync                           # pulls the CUDA 12.6 build of PyTorch on Windows
+uv run python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+The last line should print `True NVIDIA RTX A5000`. If it prints `False`, update the NVIDIA driver.
+Play clips in the report with Chrome; Edge needs the paid HEVC extension.
 
 ## Reading the report
 

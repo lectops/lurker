@@ -373,6 +373,8 @@ def fingerprints(out: Path, dims: int):
     from sklearn.decomposition import TruncatedSVD
 
     z = np.load(cache)
+    if len(z["emb"]) < 2:
+        return {}  # nothing to match against
     emb = z["emb"] / np.linalg.norm(z["emb"], axis=1, keepdims=True)
     # uncentred SVD keeps dot products (cosine similarity) close to the full vectors
     red = TruncatedSVD(min(dims, len(emb) - 1), random_state=0).fit_transform(emb)
