@@ -1,4 +1,4 @@
-﻿"""Find lurkers: people who came close to the parked car, stayed a while, or keep turning up.
+"""Find lurkers: people who came close to the parked car, stayed a while, or keep turning up.
 
 Stages (each resumable, results cached in <out>/lurkers/):
 
@@ -523,6 +523,40 @@ def stage_vlm(args):
         print(f"[{i}/{len(todo)}] {s['key']} {cache[s['key']]}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------- previews
+
+
+def make_preview(t, dest: Path, lead=2.0, tail=2.0, clip_len=15.0):
+    """H.264 clip of just the camera the person was on, a couple of seconds either side of the walk-by.
+
+    The sentry files are HEVC mosaics that most browsers can't play, so the page plays these instead.
+    """
+    import subprocess
+
+    _, x, y = next(c for c in CAMS if c[0] == t["cam"])
+    start = max(t["t0"] - lead, 0.0)
+    length = min(t["t1"] + tail, clip_len) - start
+    cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{length:.2f}", "-i", t["path"],
+           "-vf", f"crop={QW}:{QH}:{x}:{y}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "27",
+           "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dest)]
+    return subprocess.run(cmd, capture_output=True).returncode == 0 and dest.exists()
+
+
+def stage_previews(args):
+    wd = work_dir(args.out)
+    (wd / "preview").mkdir(exist_ok=True)
+    data = json.loads((wd / "groups.json").read_text(encoding="utf-8"))
+    wanted = {s["key"] for g in data["groups"] for s in g["sightings"]}
+    todo = [t for t in load_tracks(args.out) if t["key"] in wanted and not (wd / "preview" / f"{t['key']}.mp4").exists()]
+    print(f"{len(todo)} previews to make ({len(wanted) - len(todo)} done)", file=sys.stderr)
+    done = 0
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        for ok in pool.map(lambda t: make_preview(t, wd / "preview" / f"{t['key']}.mp4"), todo):
+            done += 1
+            if done % 200 == 0 or done == len(todo):
+                print(f"[{done}/{len(todo)}]", file=sys.stderr)
+
+
 # ---------------------------------------------------------------- page
 
 PAGE = r"""<!doctype html>
@@ -545,6 +579,8 @@ main{padding:16px;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,m
 .marks{display:flex;gap:4px;flex-wrap:wrap}.card.marked{opacity:.55}
 details summary{cursor:pointer;color:var(--mute)}.sight{display:flex;gap:8px;margin-top:6px;align-items:flex-start}
 .sight img{width:150px;border-radius:6px;flex:none}.sight a{color:var(--fg)}.vlm{color:var(--acc)}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;align-items:center;justify-content:center;flex-direction:column;gap:8px;z-index:20;padding:16px}
+#modal.open{display:flex}#modal video{max-width:min(92vw,960px);max-height:78vh;border-radius:8px;background:#000}#modal a{color:#fff}
 .empty{padding:40px;text-align:center;color:var(--mute)}
 @media(max-width:480px){main{grid-template-columns:1fr;padding:16px}}
 </style></head><body>
@@ -557,6 +593,7 @@ details summary{cursor:pointer;color:var(--mute)}.sight{display:flex;gap:8px;mar
 <button id="export">Export marks</button><button id="import">Import marks</button><input id="file" type="file" accept=".json" hidden>
 <span id="count" style="color:var(--mute)"></span></header>
 <main id="main"></main>
+<div id="modal"><video id="player" controls playsinline loop></video><div id="mcap" style="color:#fff"></div></div>
 <script>
 const D=__DATA__;
 const KEY="lurker-people-marks";
@@ -573,8 +610,8 @@ function card(g){
  const m=marks[g.id]||"";
  const cams=Object.entries(g.cams).map(([k,v])=>k+" "+v).join(", ");
  const pl=g.places.map(p=>esc(pname(p))).join(", ")||"unknown";
- const sights=g.sightings.map(s=>`<div class="sight"><a href="${s.uri}#t=${s.t0}" target="_blank"><img loading="lazy" src="${s.ctx}"></a>
- <div><a href="${s.uri}#t=${s.t0}" target="_blank">${fmt(s.ts)}</a><div class="stats">${s.cam} camera, ${s.dwell}s in view, closeness ${s.area}${s.owner?`, <span class="tag me">${s.owner}</span>`:""}, ${esc(pname(s.place))}</div>${vlmText(s.vlm)}</div></div>`).join("");
+ const sights=g.sightings.map(s=>`<div class="sight"><a class="play" href="${s.uri}#t=${s.t0}" data-pv="${s.pv||""}" data-cap="${esc(fmt(s.ts)+", "+s.cam+" camera")}"><img loading="lazy" src="${s.ctx}"></a>
+ <div><a class="play" href="${s.uri}#t=${s.t0}" data-pv="${s.pv||""}" data-cap="${esc(fmt(s.ts)+", "+s.cam+" camera")}">${fmt(s.ts)}</a><div class="stats">${s.cam} camera, ${s.dwell}s in view, closeness ${s.area}${s.owner?`, <span class="tag me">${s.owner}</span>`:""}, ${esc(pname(s.place))}</div>${vlmText(s.vlm)}</div></div>`).join("");
  return `<div class="card ${m?"marked":""}" data-id="${esc(g.id)}">
  <div class="crops">${g.crops.map(c=>`<img loading="lazy" src="${c}">`).join("")}</div>
  <div class="top"><span class="score">score ${g.score}</span><span>${g.likelyMe?'<span class="tag me">likely you</span> ':""}${m?`<span class="tag">${m}</span>`:""}</span></div>
@@ -591,6 +628,12 @@ function render(){
  $("main").innerHTML=gs.slice(0,200).map(card).join("")||'<div class="empty">No groups match.</div>';
 }
 $("main").addEventListener("click",e=>{const b=e.target.closest("button[data-m]");if(!b)return;const id=b.closest(".card").dataset.id;if(b.dataset.m)marks[id]=b.dataset.m;else delete marks[id];save();render()});
+const modal=$("modal"),player=$("player");
+function closeModal(){modal.classList.remove("open");player.pause();player.removeAttribute("src");player.load()}
+$("main").addEventListener("click",e=>{const a=e.target.closest("a.play");if(!a||!a.dataset.pv)return;e.preventDefault();
+ player.src=a.dataset.pv;$("mcap").innerHTML=esc(a.dataset.cap)+' &nbsp; <a href="'+a.href+'" target="_blank">open original clip</a>';modal.classList.add("open");player.play().catch(()=>{})});
+modal.addEventListener("click",e=>{if(e.target===modal)closeModal()});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal()});
 $("place").addEventListener("dblclick",()=>{const p=$("place").value;if(!p)return;const n=prompt("Name for place "+p,pname(p));if(n){names[p]=n;save();fillPlaces();render()}});
 ["sort","place","mindays","hide","hideme"].forEach(i=>$(i).addEventListener("input",render));
 $("export").onclick=()=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify({marks,names},null,1)],{type:"application/json"}));a.download="lurker-people-marks.json";a.click()};
@@ -604,6 +647,10 @@ fillPlaces();render();
 def stage_page(args):
     wd = work_dir(args.out)
     data = json.loads((wd / "groups.json").read_text(encoding="utf-8"))
+    for g in data["groups"]:
+        for st in g["sightings"]:
+            if (wd / "preview" / f"{st['key']}.mp4").exists():
+                st["pv"] = f"lurkers/preview/{st['key']}.mp4"
     html = PAGE.replace("__DATA__", json.dumps(data).replace("</", "<\\/"))
     page = args.out / "people.html"
     page.write_text(html, encoding="utf-8")
@@ -613,7 +660,7 @@ def stage_page(args):
 # ---------------------------------------------------------------- main
 
 STAGES = {"tracks": stage_tracks, "embed": stage_embed, "group": stage_group, "vlm": stage_vlm,
-          "page": stage_page}
+          "previews": stage_previews, "page": stage_page}
 
 
 def main():
@@ -641,6 +688,7 @@ def main():
     ap.add_argument("--dist", type=float, default=0.15, help="group stage: max cosine distance inside a group "
                     "(lower = more, smaller groups)")
     ap.add_argument("--place-sim", type=float, default=0.6, help="group stage: place match strictness")
+    ap.add_argument("--workers", type=int, default=6, help="previews stage: parallel ffmpeg jobs")
     ap.add_argument("--max-sightings", type=int, default=60, help="Sightings kept per card")
     ap.add_argument("--vlm-model", default="qwen2.5vl:7b")
     ap.add_argument("--ollama-url", default="http://localhost:11434")
@@ -652,7 +700,7 @@ def main():
     args.drives = [d.resolve() for d in args.drives]
     # report.py lives next to this file; make the import work from any working directory
     sys.path.insert(0, str(Path(__file__).parent))
-    for name in (["tracks", "embed", "group", "page"] if args.stage == "all" else [args.stage]):
+    for name in (["tracks", "embed", "group", "previews", "page"] if args.stage == "all" else [args.stage]):
         print(f"\n=== {name} ===", file=sys.stderr, flush=True)
         STAGES[name](args)
 
