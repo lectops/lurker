@@ -631,7 +631,7 @@ $("main").addEventListener("click",e=>{const b=e.target.closest("button[data-m]"
 const modal=$("modal"),player=$("player");
 function closeModal(){modal.classList.remove("open");player.pause();player.removeAttribute("src");player.load()}
 $("main").addEventListener("click",e=>{const a=e.target.closest("a.play");if(!a||!a.dataset.pv)return;e.preventDefault();
- player.src=a.dataset.pv;$("mcap").innerHTML=esc(a.dataset.cap)+' &nbsp; <a href="'+a.href+'" target="_blank">open original clip</a>';modal.classList.add("open");player.play().catch(()=>{})});
+ player.src=a.dataset.pv;$("mcap").innerHTML=esc(a.dataset.cap)+' &nbsp; <a href="'+a.dataset.pv+'" download="'+a.dataset.pv.split("/").pop()+'">save video</a> &nbsp; <a href="'+a.href+'" target="_blank">open original clip</a>';modal.classList.add("open");player.play().catch(()=>{})});
 modal.addEventListener("click",e=>{if(e.target===modal)closeModal()});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal()});
 $("place").addEventListener("dblclick",()=>{const p=$("place").value;if(!p)return;const n=prompt("Name for place "+p,pname(p));if(n){names[p]=n;save();fillPlaces();render()}});

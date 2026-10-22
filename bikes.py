@@ -262,7 +262,7 @@ const modal=$("modal"),player=$("player");
 function closeModal(){modal.classList.remove("open");player.pause();player.removeAttribute("src");player.load()}
 $("main").addEventListener("click",e=>{const i=e.target.closest("img");if(!i)return;
  if(!i.dataset.pv){window.open(i.dataset.uri+"#t="+i.dataset.t,"_blank");return}
- player.src=i.dataset.pv;player.currentTime=0;$("mcap").innerHTML=esc(i.dataset.cap)+' &nbsp; <a href="'+i.dataset.uri+'" target="_blank">open original clip</a>';modal.classList.add("open");player.play().catch(()=>{});
+ player.src=i.dataset.pv;player.currentTime=0;$("mcap").innerHTML=esc(i.dataset.cap)+' &nbsp; <a href="'+i.dataset.pv+'" download="'+i.dataset.pv.split("/").pop()+'">save video</a> &nbsp; <a href="'+i.dataset.uri+'" target="_blank">open original clip</a>';modal.classList.add("open");player.play().catch(()=>{});
  player.onloadedmetadata=()=>{player.currentTime=Math.max(0,(+i.dataset.t)-2)}});
 modal.addEventListener("click",e=>{if(e.target===modal)closeModal()});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal()});
