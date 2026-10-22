@@ -1,4 +1,4 @@
-"""Find lurkers: people who came close to the parked car, stayed a while, or keep turning up.
+﻿"""Find lurkers: people who came close to the parked car, stayed a while, or keep turning up.
 
 Stages (each resumable, results cached in <out>/lurkers/):
 
@@ -48,7 +48,7 @@ CAM_XY = {name: (x, y) for name, x, y in CAMS}
 
 def parse_ts(name: str):
     try:
-        return datetime.strptime(name[:19], "%Y-%m-%d_%Hh%Mm%Ss")
+        return datetime.strptime(name[:20], "%Y-%m-%d_%Hh%Mm%Ss")
     except ValueError:
         return None
 
@@ -242,44 +242,97 @@ MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 STD = np.array([0.229, 0.224, 0.225], np.float32)
 
 
-def prep_crop(path: Path):
+def prep_crop(path: Path, size=(112, 224)):
+    """Crop file -> normalised CHW float array of `size` (width, height), or None if unreadable."""
     img = cv2.imread(str(path))
     if img is None:
         return None
-    img = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), (112, 224), interpolation=cv2.INTER_AREA)
+    img = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), size, interpolation=cv2.INTER_AREA)
     return ((img.astype(np.float32) / 255 - MEAN) / STD).transpose(2, 0, 1)
+
+
+OSNET_REPO = "kaiyangzhou/osnet"  # the torchreid author's repo (MIT): OSNet trained for person re-id on MSMT17
+OSNET_FILE = ("osnet_x1_0_msmt17_combineall_256x128_amsgrad_ep150_stp60_lr0.0015_b64_fb10_"
+              "softmax_labelsmooth_flip_jitter.pth")
+
+
+def load_osnet(device):
+    """OSNet x1.0 re-id model, or None when torchreid isn't installed (`uv pip install torchreid --no-deps`).
+
+    Only torchreid's osnet.py is loaded, by path: importing the package pulls in its whole dataset stack.
+    """
+    import importlib.util
+
+    import torch
+    from huggingface_hub import hf_hub_download
+
+    spec = importlib.util.find_spec("torchreid")
+    if spec is None:
+        return None
+    src = Path(spec.submodule_search_locations[0]) / "reid" / "models" / "osnet.py"
+    mod_spec = importlib.util.spec_from_file_location("osnet_arch", src)
+    mod = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(mod)
+    model = mod.osnet_x1_0(num_classes=1041, pretrained=False)
+    state = torch.load(hf_hub_download(OSNET_REPO, OSNET_FILE), map_location="cpu", weights_only=True)
+    # the identity classifier is sized for the training set and isn't needed for features
+    state = {k.removeprefix("module."): v for k, v in state.items() if not k.startswith("classifier")}
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if any(not k.startswith("classifier") for k in missing) or unexpected:
+        raise RuntimeError(f"OSNet weights did not match the architecture: {missing[:5]} {unexpected[:5]}")
+    return model.to(device).eval()
+
+
+def embedder(args):
+    """(name, size, fn) where fn maps a (N, 3, H, W) tensor to (N, D) L2-normalised features."""
+    import torch
+
+    norm = torch.nn.functional.normalize
+    if args.reid == "osnet":
+        model = load_osnet(args.device)
+        if model is not None:
+            return "osnet", (128, 256), lambda x: norm(model(x), dim=-1)
+        print("torchreid is not installed, falling back to DINOv2 (much weaker at telling people apart)",
+              file=sys.stderr)
+    from transformers import AutoModel
+
+    model = AutoModel.from_pretrained(args.reid_model).to(args.device).eval()
+
+    def dino(x):
+        h = model(pixel_values=x).last_hidden_state
+        return torch.cat([norm(h[:, 0], dim=-1), norm(h[:, 1:].mean(1), dim=-1)], dim=-1)
+
+    return "dino", (112, 224), dino
+
+
+def emb_cache(out: Path, name: str) -> Path:
+    return work_dir(out) / f"emb-{name}.npz"
 
 
 def stage_embed(args):
     import torch
-    from transformers import AutoModel
 
-    out, wd = args.out, work_dir(args.out)
-    cache = wd / "emb.npz"
+    out = args.out
+    name, size, fn = embedder(args)
+    cache = emb_cache(out, name)
     known = {}
     if cache.exists():
         z = np.load(cache)
         known = dict(zip(z["keys"].tolist(), z["emb"]))
     tracks = [t for t in load_tracks(out) if t["key"] not in known and t["crops"]]
-    print(f"{len(tracks)} tracks to fingerprint ({len(known)} cached)", file=sys.stderr)
+    print(f"{len(tracks)} tracks to fingerprint with {name} ({len(known)} cached)", file=sys.stderr)
     if not tracks:
         return
-    # Appearance model: DINOv2 on tall (112x224) crops, CLS + mean patch tokens. A purpose-built person
-    # re-identification model (OSNet via torchreid) would separate people better, but its re-id weights
-    # are only distributed through Google Drive, so this reuses the DINOv2 already needed for places.py.
-    model = AutoModel.from_pretrained(args.reid_model).to(args.device).eval()
     pool = ThreadPoolExecutor(max_workers=8)
     for s in range(0, len(tracks), args.batch):
         chunk = tracks[s : s + args.batch]
-        imgs = list(pool.map(lambda t: [prep_crop(out / c) for c in t["crops"]], chunk))
+        imgs = list(pool.map(lambda t: [prep_crop(out / c, size) for c in t["crops"]], chunk))
         flat = [(ti, im) for ti, ims in enumerate(imgs) for im in ims if im is not None]
         if not flat:
             continue
         x = torch.from_numpy(np.stack([im for _, im in flat])).to(args.device)
         with torch.no_grad():
-            h = model(pixel_values=x).last_hidden_state
-            f = torch.cat([torch.nn.functional.normalize(h[:, 0], dim=-1),
-                           torch.nn.functional.normalize(h[:, 1:].mean(1), dim=-1)], dim=-1).cpu().numpy()
+            f = fn(x).cpu().numpy()
         by_track = {}
         for (ti, _), v in zip(flat, f):
             by_track.setdefault(ti, []).append(v)
@@ -312,14 +365,26 @@ def cluster_places(out: Path, sim: float):
     return {p: rank[c] for p, c in zip(paths, lab)}, dict(Counter(rank[c] for c in lab))
 
 
-def cluster_tracks(keys, emb, dist: float):
+def cluster_tracks(tracks, emb, dist: float):
+    """Average-linkage clustering on cosine distance. Two tracks that overlap in time on the same camera
+    of the same clip are different people, so their distance is pushed out of reach."""
     from sklearn.cluster import AgglomerativeClustering
 
-    if len(keys) < 2:
-        return np.zeros(len(keys), int)
+    if len(tracks) < 2:
+        return np.zeros(len(tracks), int)
+    d = np.clip(1 - emb @ emb.T, 0, 2).astype(np.float32)
+    np.fill_diagonal(d, 0)
+    by = {}
+    for i, t in enumerate(tracks):
+        by.setdefault((t["path"], t["cam"]), []).append(i)
+    for idx in by.values():
+        for a in idx:
+            for b in idx:
+                if a < b and tracks[a]["t0"] < tracks[b]["t1"] and tracks[b]["t0"] < tracks[a]["t1"]:
+                    d[a, b] = d[b, a] = 10.0
     return AgglomerativeClustering(
-        n_clusters=None, metric="cosine", linkage="average", distance_threshold=dist
-    ).fit_predict(emb)
+        n_clusters=None, metric="precomputed", linkage="average", distance_threshold=dist
+    ).fit_predict(d)
 
 
 def score_group(s):
@@ -355,7 +420,8 @@ def stage_group(args):
     from report import drive_sessions, owner_tag
 
     out, wd = args.out, work_dir(args.out)
-    z = np.load(wd / "emb.npz")
+    name = args.reid if emb_cache(out, args.reid).exists() else "dino"
+    z = np.load(emb_cache(out, name))
     emb = dict(zip(z["keys"].tolist(), z["emb"]))
     tracks = [t for t in load_tracks(out) if t["key"] in emb]
     place_of, place_sizes = cluster_places(out, args.place_sim)
@@ -363,13 +429,14 @@ def stage_group(args):
     window = timedelta(minutes=args.owner_window)
     for t in tracks:
         ts = parse_ts(Path(t["path"]).name)
-        track_ts = datetime.fromisoformat(t["ts"]) if t["ts"] else ts
+        track_ts = ts + timedelta(seconds=t["t0"]) if ts else None
+        t["ts"] = track_ts.isoformat() if track_ts else ""
         t["date"] = track_ts.strftime("%Y-%m-%d") if track_ts else ""
         t["hour"] = track_ts.hour if track_ts else 12
         t["place"] = place_of.get(t["path"], 0)
         t["owner"] = owner_tag(ts, sessions, window) if ts else ""
-    keys = [t["key"] for t in tracks]
-    lab = cluster_tracks(keys, np.stack([emb[k] for k in keys]) if keys else np.zeros((0, 1)), args.dist)
+    lab = cluster_tracks(tracks, np.stack([emb[t["key"]] for t in tracks]) if tracks else np.zeros((0, 1)),
+                         args.dist)
     groups = {}
     for t, g in zip(tracks, lab):
         groups.setdefault(int(g), []).append(t)
@@ -567,9 +634,11 @@ def main():
     ap.add_argument("--person-conf", type=float, default=0.65, help="Track needs this in 2+ frames")
     ap.add_argument("--min-area", type=float, default=0.02, help="Ignore tracks that never get this close")
     ap.add_argument("--imgsz", type=int, default=640)
-    ap.add_argument("--reid-model", default="facebook/dinov2-small")
+    ap.add_argument("--reid", default="osnet", choices=["osnet", "dino"],
+                    help="Appearance model: osnet (needs `uv pip install torchreid --no-deps`) or dino (weaker)")
+    ap.add_argument("--reid-model", default="facebook/dinov2-small", help="Hugging Face model for --reid dino")
     ap.add_argument("--batch", type=int, default=32, help="embed stage: tracks per batch")
-    ap.add_argument("--dist", type=float, default=0.25, help="group stage: max cosine distance inside a group "
+    ap.add_argument("--dist", type=float, default=0.15, help="group stage: max cosine distance inside a group "
                     "(lower = more, smaller groups)")
     ap.add_argument("--place-sim", type=float, default=0.6, help="group stage: place match strictness")
     ap.add_argument("--max-sightings", type=int, default=60, help="Sightings kept per card")

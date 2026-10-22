@@ -80,3 +80,21 @@ Pins live in browser storage: use Export / Import in the Places panel to back th
 
 AGPL-3.0, matching [Ultralytics YOLO](https://github.com/ultralytics/ultralytics), which this depends on.
 Your footage, results and thumbnails stay local: `output*/` is gitignored.
+
+## Finding lurkers
+
+`lurkers.py` turns the scan into a people view: who came close to the car, stayed a while, or keeps turning up.
+
+```
+uv pip install torchreid --no-deps        # optional: OSNet person re-id (otherwise a weaker DINOv2 fallback)
+uv run python lurkers.py output --drives "<...>/Electro/Dashcam"
+```
+
+Stages (each resumable, cached in `output/lurkers/`): `tracks` (ByteTrack on the fisheye cameras of clips with
+a person), `embed` (appearance fingerprint per track), `group` (cluster tracks into person groups and clips
+into places, score the groups), `vlm` (optional Ollama pass on the top candidates), `page` (`output/people.html`).
+`--stage tracks --shard i/n` splits the slow stage across processes.
+
+Appearance matching on fisheye crops is weak: the same person can land in several groups and different people
+can share one. Treat groups as leads, merge them by eye, and mark yours as "me" in the page. The score formula
+is in the header of `lurkers.py`.
