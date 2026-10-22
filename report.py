@@ -335,7 +335,7 @@ def duration(path: Path) -> float:
 
 def drive_sessions(dirs, cache_path: Path):
     """Merge dashcam segments into (start, end) drives. Durations are cached."""
-    cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
+    cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
     segs = []
     for d in dirs:
         for p in d.glob("**/*.mp4"):
@@ -345,7 +345,7 @@ def drive_sessions(dirs, cache_path: Path):
             if str(p) not in cache:
                 cache[str(p)] = duration(p)
             segs.append((ts, ts + timedelta(seconds=cache[str(p)])))
-    cache_path.write_text(json.dumps(cache))
+    cache_path.write_text(json.dumps(cache), encoding="utf-8")
     sessions = []
     for start, end in sorted(segs):
         if sessions and start - sessions[-1][1] < timedelta(minutes=2):
@@ -399,7 +399,7 @@ def main():
     fps = fingerprints(args.out, args.fp_dims)
 
     rows = []
-    for line in (args.out / "results.jsonl").open():
+    for line in (args.out / "results.jsonl").open(encoding="utf-8"):
         r = json.loads(line)
         if not r.get("thumbs"):
             continue
@@ -425,7 +425,7 @@ def main():
     page = PAGE.format(data=json.dumps(rows), has_fp=json.dumps(bool(fps)),
                        default_min=args.min, default_sim=args.sim)
     out = args.out / "report.html"
-    out.write_text(page)
+    out.write_text(page, encoding="utf-8")
     print(f"{len(sessions)} drives, {sum(1 for d in rows if d['owner'])} clips tagged as likely you")
     print(f"{sum('fp' in d for d in rows)} clips have place fingerprints")
     print(f"{len(rows)} clips with a person or moving vehicle -> {out}")

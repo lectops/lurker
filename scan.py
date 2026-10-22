@@ -79,7 +79,7 @@ def detect(model, frames, conf: float, imgsz: int, batch: int, device: str = "mp
     for i in range(0, len(crops), batch):
         results = model.predict(
             crops[i : i + batch], classes=[PERSON, *VEHICLES], conf=conf, imgsz=imgsz,
-            device=device, quantize=16 if device == "cuda" else None, verbose=False,
+            device=device, half=device == "cuda", verbose=False,
         )
         for (fi, cam), r in zip(index[i : i + batch], results):
             if not len(r.boxes):
@@ -221,7 +221,7 @@ def main():
     results_path = args.out / "results.jsonl"
     done = set()
     if results_path.exists():
-        done = {json.loads(l)["path"] for l in results_path.open()}
+        done = {json.loads(l)["path"] for l in results_path.open(encoding="utf-8")}
 
     clips = sorted(p for p in args.root.glob(args.glob) if str(p) not in done)
     if args.limit:
@@ -233,7 +233,7 @@ def main():
     pool = ThreadPoolExecutor(max_workers=3)
     pending = [pool.submit(read_frames, c, args.fps, hwaccel) for c in clips[:4]]
     t0 = time.time()
-    with results_path.open("a") as f:
+    with results_path.open("a", encoding="utf-8") as f:
         for i, clip in enumerate(clips, 1):
             fut = pending.pop(0)
             if i + 3 < len(clips):
@@ -251,7 +251,7 @@ def main():
                     if best["score"] >= args.thumb_min_area:
                         thumb = args.out / "thumbs" / f"{clip.stem}_{kind.replace('/', '_')}.jpg"
                         save_thumb(frames, best, thumb)
-                        res["thumbs"][kind] = str(thumb.relative_to(args.out))
+                        res["thumbs"][kind] = thumb.relative_to(args.out).as_posix()
             f.write(json.dumps(res) + "\n")
             f.flush()
             rate = i / (time.time() - t0)

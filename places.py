@@ -53,7 +53,7 @@ def main():
     if cache.exists():
         z = np.load(cache)
         known = dict(zip(z["paths"].tolist(), z["emb"]))
-    paths = [json.loads(l)["path"] for l in (args.out / "results.jsonl").open()]
+    paths = [json.loads(l)["path"] for l in (args.out / "results.jsonl").open(encoding="utf-8")]
     todo = [p for p in paths if p not in known]
     print(f"{len(todo)} clips to fingerprint ({len(known)} cached)", file=sys.stderr)
 

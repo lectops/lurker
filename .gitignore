@@ -4,3 +4,7 @@ output*/
 .venv/
 __pycache__/
 run-2025.sh
+*.engine
+*.onnx
+scan-*.log
+output-full.*
