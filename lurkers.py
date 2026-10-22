@@ -526,7 +526,7 @@ def stage_vlm(args):
 # ---------------------------------------------------------------- previews
 
 
-def make_preview(t, dest: Path, lead=2.0, tail=2.0, clip_len=15.0):
+def make_preview(t, dest: Path, lead=2.0, tail=2.0):
     """H.264 clip of just the camera the person was on, a couple of seconds either side of the walk-by.
 
     The sentry files are HEVC mosaics that most browsers can't play, so the page plays these instead.
@@ -535,7 +535,7 @@ def make_preview(t, dest: Path, lead=2.0, tail=2.0, clip_len=15.0):
 
     _, x, y = next(c for c in CAMS if c[0] == t["cam"])
     start = max(t["t0"] - lead, 0.0)
-    length = min(t["t1"] + tail, clip_len) - start
+    length = t["t1"] + tail - start  # ffmpeg stops at the end of the file
     cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{length:.2f}", "-i", t["path"],
            "-vf", f"crop={QW}:{QH}:{x}:{y}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "27",
            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dest)]

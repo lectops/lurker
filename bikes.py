@@ -204,7 +204,7 @@ def stage_previews(args):
             stem = Path(r["path"]).stem
             dest = wd / "preview" / f"{stem}_{r['cam']}.mp4"
             if not dest.exists():
-                todo.append(({"path": r["path"], "cam": r["cam"], "t0": 0.0, "t1": 15.0}, dest))
+                todo.append(({"path": r["path"], "cam": r["cam"], "t0": 0.0, "t1": r["n_frames"] / args.fps}, dest))
     print(f"{len(todo)} previews to make", file=sys.stderr)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         list(pool.map(lambda td: make_preview(td[0], td[1], lead=0, tail=0), todo))
