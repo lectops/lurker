@@ -70,7 +70,8 @@ def main():
                     known[p] = e
             print(f"[{min(i + args.batch, len(todo))}/{len(todo)}]", file=sys.stderr)
             if (i // args.batch) % 20 == 0 or i + args.batch >= len(todo):
-                np.savez(cache, paths=np.array(list(known)), emb=np.stack(list(known.values())))
+                emb = np.stack(list(known.values())) if known else np.zeros((0, 0), np.float32)
+                np.savez(cache, paths=np.array(list(known), dtype=str), emb=emb)
 
 
 if __name__ == "__main__":

@@ -147,3 +147,11 @@ def test_merge_without_batch_id_refuses(tmp_path, dirs):
     with pytest.raises(ValueError):
         merge(b, o)
     assert not (o / "results.jsonl").exists()
+
+
+def test_merge_with_empty_places_in_batch(tmp_path, dirs):
+    _, o = dirs
+    b = make_batch(tmp_path, results=[{"path": B, "error": "x"}])
+    np.savez(b / "places.npz", paths=np.array([], dtype=str), emb=np.zeros((0, 0), np.float32))
+    assert merge(b, o)["merged"] is True
+    assert not (o / "places.npz").exists()

@@ -81,6 +81,8 @@ def merge_places(batch: Path, out: Path):
         if f.exists():
             z = np.load(f)
             known.update(zip(z["paths"].tolist(), z["emb"]))
+    if not known:
+        return  # nothing fingerprinted in the batch (every clip undecodable)
     tmp = out / "places.tmp.npz"
     np.savez(tmp, paths=np.array(list(known)), emb=np.stack(list(known.values())))
     tmp.replace(dst)
