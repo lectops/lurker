@@ -18,6 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import detector
 from detector import load_detector
 
 W, H = 1440, 1080
@@ -287,6 +288,7 @@ def main():
                         res["thumbs"][kind] = thumb.relative_to(args.out).as_posix()
             f.write(json.dumps(res) + "\n")
             f.flush()
+            detector.free_memory()
             rate = i / (time.time() - t0)
             eta = (len(clips) - i) / rate / 60
             summary = "  ".join(f"{k}={b['score']:.3f}" for k, b in res.get("best", {}).items() if b["score"])

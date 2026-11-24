@@ -61,6 +61,17 @@ class YoloDetector:
         return out
 
 
+def free_memory():
+    """Hand cached GPU memory back after each clip. Without it, torch's MPS allocator keeps every
+    batch shape's buffers and held 9 to 11 GB on the 16 GB mini, which then swapped (2026-11 tuning run)."""
+    import torch
+
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def _build_rfdetr(size, device):
     import rfdetr
 

@@ -48,3 +48,20 @@ def test_is_candidate_threshold():
     r = lambda s: {"best": {"person/front": {"score": s}, "vehicle/front": {"score": 0.5}}}
     assert is_candidate(r(0.06), 0.06) and not is_candidate(r(0.059), 0.06)
     assert not is_candidate({"error": "no frames decoded"}, 0.06)
+
+
+def test_scan_frees_gpu_memory_after_every_clip(tmp_path, monkeypatch):
+    import detector
+    import scan
+
+    lst = tmp_path / "l.txt"
+    lst.write_text("2026-11/01/a.mp4\n2026-11/01/b.mp4\n")
+    monkeypatch.setattr(scan, "load_detector", lambda spec, device: None)
+    monkeypatch.setattr(scan, "read_frames", lambda *a: None)
+    monkeypatch.setattr(scan, "scan_clip", lambda model, frames, args: (None, None))
+    freed = []
+    monkeypatch.setattr(detector, "free_memory", lambda: freed.append(1))
+    monkeypatch.setattr("sys.argv", ["scan.py", str(tmp_path), "--list", str(lst), "--out", str(tmp_path / "out"),
+                                     "--device", "cpu"])
+    scan.main()
+    assert len(freed) == 2

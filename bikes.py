@@ -144,6 +144,7 @@ def clip_rows(model, frames, clip: Path, cams, args, wd: Path):
 
 
 def stage_scan(args):
+    import detector
     from detector import load_detector
 
     out, wd = args.out, work_dir(args.out)
@@ -183,6 +184,7 @@ def stage_scan(args):
             f.write(json.dumps({"path": clip.as_posix(), "done": True, "bikes": len(rows),
                                 **({"error": err} if err else {})}) + "\n")
             f.flush()
+            detector.free_memory()
             rate = k / (time.time() - t0)
             nb = sum(r["near"] is not None for r in rows)
             print(f"[{k}/{len(todo)}] {clip.name} bikes {len(rows)} near {nb}  {rate:.2f} clips/s  "

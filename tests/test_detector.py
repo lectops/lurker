@@ -107,3 +107,18 @@ def test_load_detector_dispatch(monkeypatch):
     assert isinstance(d, RFDetrDetector) and d.model == ("rf", "large", "mps")
     y = load_detector("yolo26m.pt", "mps")
     assert isinstance(y, YoloDetector) and y.model == ("yolo", "yolo26m.pt")
+
+
+def test_free_memory_empties_the_mps_cache(monkeypatch):
+    import sys
+    import types
+
+    calls = []
+    fake = types.SimpleNamespace(
+        backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True)),
+        mps=types.SimpleNamespace(empty_cache=lambda: calls.append("mps")),
+        cuda=types.SimpleNamespace(is_available=lambda: False, empty_cache=lambda: calls.append("cuda")),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake)
+    detector.free_memory()
+    assert calls == ["mps"]

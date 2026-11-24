@@ -199,6 +199,7 @@ def clip_tracks(model, frames, clip: Path, cams, args, wd: Path, rel: Path):
 
 
 def stage_tracks(args):
+    import detector
     from detector import load_detector
 
     out, wd = args.out, work_dir(args.out)
@@ -238,6 +239,7 @@ def stage_tracks(args):
             f.write(json.dumps({"path": clip.as_posix(), "done": True, "tracks": len(rows),
                                 **({"error": err} if err else {})}) + "\n")
             f.flush()
+            detector.free_memory()
             rate = k / (time.time() - t0)
             print(f"[{k}/{len(clips)}] {clip.name} {len(rows)} tracks  {rate:.2f} clips/s  "
                   f"eta {(len(clips) - k) / rate / 60:.0f}m", file=sys.stderr)
