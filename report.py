@@ -49,10 +49,32 @@ button.on {{ border-color:var(--accent); color:var(--accent); }}
 #places.open {{ display:grid; gap:6px; }}
 #more {{ grid-column:1/-1; justify-self:center; padding:8px 20px; }}
 .empty {{ grid-column:1/-1; color:var(--muted); text-align:center; padding:40px; }}
+.tag.alert {{ background:var(--hot); color:#fff; }}
+.card {{ scroll-margin-top:80px; }}
+.card.target {{ outline:3px solid var(--accent); outline-offset:2px; }}
+#sheet {{ display:grid; gap:8px; }}
+#filtersBtn, #sheetDone {{ display:none; }}
+@media (max-width:700px) {{
+  header {{ padding:8px 16px; }}
+  main {{ grid-template-columns:1fr; padding:12px 16px; gap:12px; }}
+  #filtersBtn {{ display:inline-block; }}
+  #sheet {{ display:none; position:fixed; left:0; right:0; bottom:0; max-height:80vh; overflow:auto; background:var(--card);
+    border-top:1px solid var(--line); border-radius:14px 14px 0 0; padding:14px 16px 28px; z-index:5; box-shadow:0 -8px 24px rgba(0,0,0,.3); }}
+  #sheet.open {{ display:grid; gap:12px; }}
+  #sheet .bar {{ flex-direction:column; align-items:stretch; gap:10px; }}
+  #sheet label {{ justify-content:space-between; }}
+  #sheet label:has(input[type=checkbox]) {{ justify-content:flex-start; gap:10px; }}
+  #sheetDone {{ display:block; width:100%; }}
+  button, select, input[type=date], input[type=text] {{ min-height:44px; font-size:16px; }}
+  input[type=checkbox] {{ width:22px; height:22px; }}
+  .btns {{ flex-wrap:wrap; }}
+  .btns button {{ flex:1; }}
+}}
 </style></head><body>
 <header>
+  <div class="bar"><h1>Lurker</h1><span id="count"></span><button id="filtersBtn">Filters</button></div>
+  <div id="sheet">
   <div class="bar">
-    <h1>Lurker</h1>
     <label>Show <select id="kind">
       <option value="all">All</option><option value="person">People</option><option value="vehicle">Vehicles (moving)</option>
     </select></label>
@@ -67,7 +89,6 @@ button.on {{ border-color:var(--accent); color:var(--accent); }}
     <label>Sort <select id="sort">
       <option value="score">Closest first</option><option value="new">Newest first</option><option value="old">Oldest first</option>
     </select></label>
-    <span id="count"></span>
   </div>
   <div class="bar">
     <label>From <input id="from" type="date"></label>
@@ -80,6 +101,7 @@ button.on {{ border-color:var(--accent); color:var(--accent); }}
     <label><input id="byday" type="checkbox"> Group by day</label>
     <label><input id="hide" type="checkbox" checked> Hide reviewed</label>
     <label><input id="hideOwner" type="checkbox"> Hide likely-you</label>
+    <label><input id="alerted" type="checkbox"> Alerted only</label>
     <button id="placesBtn">Places…</button>
   </div>
   <div id="places">
@@ -92,6 +114,8 @@ button.on {{ border-color:var(--accent); color:var(--accent); }}
       <button id="exportPlaces">Export places</button>
       <label>Import <input id="importPlaces" type="file" accept="application/json"></label>
     </div>
+  </div>
+  <button id="sheetDone">Done</button>
   </div>
 </header>
 <main id="grid"></main>
@@ -107,7 +131,8 @@ const load = (k, d) => {{ try {{ return JSON.parse(localStorage.getItem(k)) ?? d
 const store = (k, v) => {{ try {{ localStorage.setItem(k, JSON.stringify(v)); }} catch (e) {{}} }};
 let reviewed = load("sentry-reviewed", {{}});
 let places = load("sentry-places", {{}});          // {{name: [clip path, ...]}}
-const FILTERS = ["kind", "camf", "place", "tod", "sort", "from", "to", "min", "byday", "hide", "hideOwner", "simth"];
+const FILTERS = ["kind", "camf", "place", "tod", "sort", "from", "to", "min", "byday", "hide", "hideOwner", "alerted", "simth"];
+const REASON = {{walkup: "came up to the car", linger: "lingered", bike: "near the bike"}};
 
 // ---- fingerprints: base64 int8 vectors, cosine = dot / 127^2 ----
 const fp = {{}};
@@ -161,6 +186,7 @@ function filtered() {{
     if (pl === "__other" ? d.placeName : pl !== "all" && d.placeName !== pl) continue;
     if ($("hide").checked && reviewed[d.path]) continue;
     if ($("hideOwner").checked && d.owner) continue;
+    if ($("alerted").checked && !d.alert) continue;
     rows.push({{d, p}});
   }}
   const s = $("sort").value;
@@ -178,19 +204,21 @@ let shown = PAGE_SIZE;
 function card({{d, p}}) {{
   const el = document.createElement("div");
   el.className = "card" + (reviewed[d.path] ? " reviewed" : "");
+  el.id = d.anchor;
   const chips = Object.entries(d.hits)
     .map(([k, h]) => `${{k.replace("person/", "👤 ").replace("vehicle/", "🚗 ")}} ${{h.score.toFixed(2)}}`).join(" · ");
-  el.innerHTML = `<img loading="lazy" src="${{p.thumb}}" title="Click to play">
+  el.innerHTML = `<img loading="lazy" src="${{p.thumb}}" title="Tap to play">
     <div class="meta">
       <div class="row"><span class="when">${{d.when}}</span><span class="score ${{cls(p.score)}}">${{p.k === "person" ? "👤" : "🚗"}} ${{p.score.toFixed(3)}} · ${{p.cam}}</span></div>
-      <div class="cams">${{d.placeName ? `<span class="tag place">${{esc(d.placeName)}}</span>` : ""}}${{d.owner ? `<span class="tag">likely you · ${{d.owner}}</span>` : ""}}${{chips}}</div>
+      <div class="cams">${{d.alert ? `<span class="tag alert">${{esc(REASON[d.alert] || d.alert)}}</span>` : ""}}${{d.placeName ? `<span class="tag place">${{esc(d.placeName)}}</span>` : ""}}${{d.owner ? `<span class="tag">likely you · ${{d.owner}}</span>` : ""}}${{chips}}</div>
       <div class="row"><span class="path">${{d.name}}</span><span class="btns">
         ${{HAS_FP && fp[d.path] ? `<button class="pin" title="Pin this clip's location as a named place">📍</button>` : ""}}
         <button class="rev">${{reviewed[d.path] ? "Unmark" : "Reviewed"}}</button></span></div>
     </div>`;
   el.querySelector("img").onclick = e => {{
     const v = document.createElement("video");
-    v.src = d.url; v.controls = true; v.autoplay = true; e.target.replaceWith(v);
+    v.src = d.url; v.controls = true; v.autoplay = true; v.playsInline = true; v.preload = "none";
+    v.setAttribute("playsinline", ""); e.target.replaceWith(v);
   }};
   el.querySelector(".rev").onclick = () => {{
     if (reviewed[d.path]) delete reviewed[d.path]; else reviewed[d.path] = 1;
@@ -268,6 +296,8 @@ function buildPlaceUI() {{
   dl.innerHTML = names.map(n => `<option value="${{esc(n)}}">`).join("");
 }}
 $("placesBtn").onclick = () => $("places").classList.toggle("open");
+$("filtersBtn").onclick = () => $("sheet").classList.toggle("open");
+$("sheetDone").onclick = () => $("sheet").classList.remove("open");
 $("exportPlaces").onclick = () => {{
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(places, null, 2)], {{type: "application/json"}}));
@@ -304,7 +334,25 @@ FILTERS.forEach(id => $(id).addEventListener(id === "min" || id === "simth" ? "i
   if (id === "simth") {{ assignPlaces(); buildPlaceUI(); }}
   render();
 }}));
+
+// ---- report.html#<clip name>: open that clip (Telegram alerts link here) ----
+function showAnchor() {{
+  const a = decodeURIComponent(location.hash.slice(1));
+  const d = a && DATA.find(x => x.anchor === a);
+  if (!d) return;
+  ["kind", "camf", "place", "tod"].forEach(id => $(id).value = "all");
+  $("from").value = $("to").value = ""; $("min").value = 0;
+  ["hide", "hideOwner", "alerted"].forEach(id => $(id).checked = false);
+  const i = filtered().findIndex(r => r.d === d);
+  shown = Math.max(PAGE_SIZE, i + 1);
+  render(false);
+  document.querySelectorAll(".card.target").forEach(e => e.classList.remove("target"));
+  const el = document.getElementById(a);
+  if (el) {{ el.classList.add("target"); el.scrollIntoView({{block: "start"}}); }}
+}}
 render();
+showAnchor();
+window.addEventListener("hashchange", showAnchor);
 </script></body></html>
 """
 
@@ -397,33 +445,34 @@ def fingerprints(out: Path, dims: int):
     return {p: base64.b64encode(v.tobytes()).decode() for p, v in zip(z["paths"].tolist(), q)}
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("out", type=Path, help="Output folder from scan.py")
-    ap.add_argument("--min", type=float, default=0.06, help="Default closeness filter in the page")
-    ap.add_argument("--drives", type=Path, nargs="*", default=[],
-                    help="Dashcam (driving) folders, used to tag clips around your own departures/arrivals")
-    ap.add_argument("--sessions", type=Path, help="TSV of drives (start, end) for likely-you tagging")
-    ap.add_argument("--owner-window", type=float, default=3, help="Minutes around a drive to tag as likely you")
-    ap.add_argument("--fp-dims", type=int, default=128, help="Place fingerprint size in the page")
-    ap.add_argument("--sim", type=float, default=0.75, help="Default place-match strictness")
-    args = ap.parse_args()
-
-    sessions = drive_sessions(args.drives, args.out / "drive_durations.json") if args.drives else []
-    if args.sessions:
-        sessions = sorted(sessions + load_sessions(args.sessions))
-    window = timedelta(minutes=args.owner_window)
-    fps = fingerprints(args.out, args.fp_dims)
-
+def read_jsonl(path: Path):
     rows = []
-    for line in (args.out / "results.jsonl").open(encoding="utf-8"):
-        r = json.loads(line)
+    if path.exists():
+        for line in path.open(encoding="utf-8"):
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return rows
+
+
+def build_rows(out: Path, sessions, window: timedelta, clip_prefix: str, fps: dict):
+    """One page row per clip with a thumbnail. A clip's newest successful result wins (a retried scan
+    appends a second row); alert reasons come from alerts.jsonl, written by the daily job."""
+    latest = {}
+    for r in read_jsonl(out / "results.jsonl"):
+        if "error" not in r:
+            latest[r["path"]] = r
+    alerted = {a["path"]: a.get("reason", "") for a in read_jsonl(out / "alerts.jsonl")}
+    rows = []
+    for r in latest.values():
         if not r.get("thumbs"):
             continue
         p = Path(r["path"])
         ts = parse_ts(p.name)
         row = {
-            "path": r["path"], "url": p.as_uri(), "name": p.name,
+            "path": r["path"], "url": p.as_uri() if p.is_absolute() else clip_prefix + r["path"],
+            "name": p.name, "anchor": p.stem, "alert": alerted.get(r["path"], ""),
             "ts": ts.isoformat() if ts else "",
             "date": ts.strftime("%Y-%m-%d") if ts else "",
             "hour": ts.hour if ts else 12,
@@ -438,6 +487,29 @@ def main():
         if r["path"] in fps:
             row["fp"] = fps[r["path"]]
         rows.append(row)
+    return rows
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("out", type=Path, help="Output folder from scan.py")
+    ap.add_argument("--min", type=float, default=0.06, help="Default closeness filter in the page")
+    ap.add_argument("--drives", type=Path, nargs="*", default=[],
+                    help="Dashcam (driving) folders, used to tag clips around your own departures/arrivals")
+    ap.add_argument("--clip-prefix", default="", help="URL prefix for relative clip paths, e.g. clips/")
+    ap.add_argument("--sessions", type=Path, help="TSV of drives (start, end) for likely-you tagging")
+    ap.add_argument("--owner-window", type=float, default=3, help="Minutes around a drive to tag as likely you")
+    ap.add_argument("--fp-dims", type=int, default=128, help="Place fingerprint size in the page")
+    ap.add_argument("--sim", type=float, default=0.75, help="Default place-match strictness")
+    args = ap.parse_args()
+
+    sessions = drive_sessions(args.drives, args.out / "drive_durations.json") if args.drives else []
+    if args.sessions:
+        sessions = sorted(sessions + load_sessions(args.sessions))
+    window = timedelta(minutes=args.owner_window)
+    fps = fingerprints(args.out, args.fp_dims)
+
+    rows = build_rows(args.out, sessions, window, args.clip_prefix, fps)
 
     page = PAGE.format(data=json.dumps(rows), has_fp=json.dumps(bool(fps)),
                        default_min=args.min, default_sim=args.sim)
