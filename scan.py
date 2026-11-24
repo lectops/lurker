@@ -45,6 +45,42 @@ def pick_device(name: str = "auto") -> str:
     return "cpu"
 
 
+def resolve_clip(root: Path, rel: str) -> Path:
+    """Results store clip paths relative to the scan root; absolute paths (older outputs) pass through."""
+    p = Path(rel)
+    return p if p.is_absolute() else root / rel
+
+
+def read_list(path: Path) -> list[str]:
+    """Clip paths from a list file, one per line. Blank lines and lines starting with # are skipped."""
+    lines = (l.strip() for l in path.read_text(encoding="utf-8").splitlines())
+    return [l for l in lines if l and not l.startswith("#")]
+
+
+def take_shard(items: list, spec: str) -> list:
+    """spec "i/n": every n-th item starting at i, so n processes can split a list without overlap."""
+    i, n = (int(v) for v in spec.split("/"))
+    if not 0 <= i < n:
+        raise ValueError(f"bad shard {spec!r}: need 0 <= i < n")
+    return items[i::n]
+
+
+def select_clips(root: Path, glob: str, list_file: Path | None, done: set[str], shard: str, limit: int) -> list[str]:
+    """Clips to scan, as sorted relative posix paths: from the list file if given, else the glob."""
+    if list_file is not None:
+        rels = read_list(list_file)
+    else:
+        rels = [p.relative_to(root).as_posix() for p in root.glob(glob)]
+    rels = take_shard(sorted(r for r in set(rels) if r not in done), shard)
+    return rels[:limit] if limit else rels
+
+
+def is_candidate(result: dict, min_area: float) -> bool:
+    """A confirmed person reached this closeness on some camera: worth tracking."""
+    return any(k.startswith("person/") and b.get("score", 0) >= min_area
+               for k, b in result.get("best", {}).items())
+
+
 def read_frames(path: Path, fps: float, hwaccel: str | None = None):
     def run(accel):
         cmd = ["ffmpeg", "-v", "error", *(["-hwaccel", accel] if accel else []), "-i", str(path),
@@ -193,6 +229,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("root", type=Path, help="Sentry folder (searched recursively)")
     ap.add_argument("--glob", default="**/*.mp4")
+    ap.add_argument("--list", type=Path, help="File of clip paths relative to root, one per line (overrides --glob)")
+    ap.add_argument("--shard", default="0/1", help="i/n: scan every n-th clip starting at i")
     ap.add_argument("--out", type=Path, default=Path("output"))
     ap.add_argument("--model", default="rfdetr:large", help="rfdetr:<size> or YOLO weights")
     ap.add_argument("--fps", type=float, default=2.0)
@@ -219,9 +257,8 @@ def main():
     if results_path.exists():
         done = {json.loads(l)["path"] for l in results_path.open(encoding="utf-8")}
 
-    clips = sorted(p for p in args.root.glob(args.glob) if str(p) not in done)
-    if args.limit:
-        clips = clips[: args.limit]
+    rels = select_clips(args.root, args.glob, args.list, done, args.shard, args.limit)
+    clips = [resolve_clip(args.root, r) for r in rels]
     print(f"{len(clips)} clips to scan ({len(done)} already done) on {args.device}", file=sys.stderr)
 
     model = load_detector(args.model, args.device)
@@ -230,7 +267,7 @@ def main():
     pending = [pool.submit(read_frames, c, args.fps, hwaccel) for c in clips[:4]]
     t0 = time.time()
     with results_path.open("a", encoding="utf-8") as f:
-        for i, clip in enumerate(clips, 1):
+        for i, (rel, clip) in enumerate(zip(rels, clips), 1):
             fut = pending.pop(0)
             if i + 3 < len(clips):
                 pending.append(pool.submit(read_frames, clips[i + 3], args.fps, hwaccel))
@@ -240,7 +277,7 @@ def main():
                 res, frames = {"error": str(e)}, None
             if res is None:
                 res = {"error": "no frames decoded"}
-            res["path"] = str(clip)
+            res["path"] = rel
             if frames is not None:
                 res["thumbs"] = {}
                 for kind, best in res["best"].items():

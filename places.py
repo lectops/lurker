@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from transformers import AutoImageProcessor, AutoModel
 
-from scan import CAMS, QH, QW, H, W, pick_device
+from scan import CAMS, QH, QW, H, W, pick_device, resolve_clip
 
 
 def grab_frame(path: str):
@@ -42,6 +42,7 @@ def embed(model, proc, frames, device):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out", type=Path, help="Output folder from scan.py (reads results.jsonl)")
+    ap.add_argument("--root", type=Path, default=Path("."), help="Scan root that result paths are relative to")
     ap.add_argument("--model", default="facebook/dinov2-small")
     ap.add_argument("--batch", type=int, default=16, help="Clips per batch (x4 camera views)")
     ap.add_argument("--device", default="auto", help="auto (cuda > mps > cpu), cuda, mps, cpu")
@@ -62,7 +63,7 @@ def main():
     with ThreadPoolExecutor(max_workers=8) as pool:
         for i in range(0, len(todo), args.batch):
             chunk = todo[i : i + args.batch]
-            frames = list(pool.map(grab_frame, chunk))
+            frames = list(pool.map(lambda p: grab_frame(str(resolve_clip(args.root, p))), chunk))
             ok = [(p, f) for p, f in zip(chunk, frames) if f is not None]
             if ok:
                 for p, e in zip([p for p, _ in ok], embed(model, proc, [f for _, f in ok], device)):

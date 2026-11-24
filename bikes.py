@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 
 from lurkers import make_preview, parse_ts, read_jsonl
-from scan import CAMS, HWACCEL, QH, QW, area, pick_device, read_frames
+from scan import CAMS, HWACCEL, QH, QW, area, is_candidate, pick_device, read_frames, resolve_clip
 
 PERSON, BICYCLE = 0, 1
 
@@ -123,7 +123,7 @@ def clip_rows(model, frames, clip: Path, cams, args, wd: Path):
             continue
         bike, seen = found
         near = people_near(dets[cam], bike, args)
-        row = {"path": str(clip), "cam": cam, "bike": [round(float(v), 1) for v in bike],
+        row = {"path": clip.as_posix(), "cam": cam, "bike": [round(float(v), 1) for v in bike],
                "bike_frames": len(seen), "n_frames": len(frames), "near": None}
         if near:
             frames_near = sorted({fi for fi, *_ in near})
@@ -148,36 +148,38 @@ def stage_scan(args):
 
     out, wd = args.out, work_dir(args.out)
     i, n = (int(v) for v in args.shard.split("/"))
-    clips = [Path(r["path"]) for r in read_jsonl(out / "results.jsonl") if "error" not in r]
+    clips = [Path(r["path"]) for r in read_jsonl(out / "results.jsonl") if is_candidate(r, args.min_candidate)]
     if args.glob:
         clips = [c for c in clips if c.match(args.glob)]
     if args.limit:
         clips = clips[: args.limit]
     bf = wd / (f"bikes-{i}.jsonl" if n > 1 else "bikes.jsonl")
     done = {r["path"] for f in wd.glob("bikes*.jsonl") for r in read_jsonl(f) if r.get("done")}
-    todo = [c for c in clips[i::n] if str(c) not in done]
+    todo = [c for c in clips[i::n] if c.as_posix() not in done]
     print(f"{len(todo)} clips to scan ({len(done)} done, shard {i}/{n}) on {args.device}", file=sys.stderr)
 
     model = load_detector(args.model, args.device)
     hw = HWACCEL.get(args.device)
     pool = ThreadPoolExecutor(max_workers=2)
-    pending = [pool.submit(read_frames, c, args.fps, hw) for c in todo[:3]]
+    pending = [pool.submit(read_frames, resolve_clip(args.root, c.as_posix()), args.fps, hw) for c in todo[:3]]
     t0 = time.time()
     with bf.open("a", encoding="utf-8") as f:
         for k, clip in enumerate(todo, 1):
             fut = pending.pop(0)
             if k + 2 < len(todo):
-                pending.append(pool.submit(read_frames, todo[k + 2], args.fps, hw))
-            rows = []
+                pending.append(pool.submit(read_frames, resolve_clip(args.root, todo[k + 2].as_posix()), args.fps, hw))
+            rows, err = [], None
             try:
                 frames = fut.result()
                 if frames is not None:
                     rows = clip_rows(model, frames, clip, args.cams, args, wd)
             except Exception as e:
                 print(f"{clip.name}: {e}", file=sys.stderr)
+                err = str(e)
             for r in rows:
                 f.write(json.dumps(r) + "\n")
-            f.write(json.dumps({"path": str(clip), "done": True, "bikes": len(rows)}) + "\n")
+            f.write(json.dumps({"path": clip.as_posix(), "done": True, "bikes": len(rows),
+                                **({"error": err} if err else {})}) + "\n")
             f.flush()
             rate = k / (time.time() - t0)
             nb = sum(r["near"] is not None for r in rows)
@@ -203,7 +205,7 @@ def stage_previews(args):
                 todo.append(({"path": r["path"], "cam": r["cam"], "t0": 0.0, "t1": r["n_frames"] / args.fps}, dest))
     print(f"{len(todo)} previews to make", file=sys.stderr)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        list(pool.map(lambda td: make_preview(td[0], td[1], lead=0, tail=0), todo))
+        list(pool.map(lambda td: make_preview(td[0], td[1], lead=0, tail=0, root=args.root), todo))
 
 
 PAGE = r"""<!doctype html>
@@ -308,6 +310,9 @@ def main():
     ap.add_argument("--drives", type=Path, nargs="*", default=[], help="Dashcam folders, to tag likely-you clips")
     ap.add_argument("--owner-window", type=float, default=3, help="Minutes around a drive to tag as likely you")
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--root", type=Path, default=Path("."), help="Scan root that result paths are relative to")
+    ap.add_argument("--min-candidate", type=float, default=0.06,
+                    help="scan stage: only clips where a confirmed person reached this closeness")
     ap.add_argument("--shard", default="0/1", help="scan stage: i/n, to run n processes side by side")
     ap.add_argument("--glob", default="", help="scan stage: only clips whose path matches this pattern")
     ap.add_argument("--limit", type=int, default=0)

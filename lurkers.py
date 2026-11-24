@@ -38,10 +38,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from scan import CAMS, HWACCEL, QH, QW, area, pick_device, read_frames
+from scan import CAMS, HWACCEL, QH, QW, area, is_candidate, pick_device, read_frames, resolve_clip
 
 NEAR = 0.06  # closeness at which someone counts as close to the car (scan.py calibration)
 LINGER_SECONDS = 10
+HOT = 0.15  # closeness at which someone is right at the car (scan.py's "hot")
+DEFAULT_CAMS = ["left", "rear", "front", "right"]
 NIGHT = (19, 6)  # hours: night is hour >= 19 or hour < 6
 CAM_XY = {name: (x, y) for name, x, y in CAMS}
 
@@ -128,6 +130,11 @@ def track_camera(per_frame, args):
     return tracks
 
 
+def close_seconds(areas, fps: float, hot: float = HOT) -> float:
+    """Seconds a track spent at or above `hot` closeness: a walk-by is brief, someone stopping at the car is not."""
+    return round(sum(a >= hot for a in areas) / fps, 2)
+
+
 def pick_crop_frames(dets, n=4):
     """Up to n detections spread over the track's lifetime, the largest and most confident per slice."""
     slices = np.array_split(np.arange(len(dets)), min(n, len(dets)))
@@ -180,11 +187,12 @@ def clip_tracks(model, frames, clip: Path, cams, args, wd: Path, rel: Path):
             save_context(frames[best[0]], cam, best[1], ctx)
             f0, f1 = dets[0][0], dets[-1][0]
             out.append({
-                "key": key, "path": str(clip), "cam": cam, "tid": tid,
+                "key": key, "path": clip.as_posix(), "cam": cam, "tid": tid,
                 "ts": (ts + timedelta(seconds=f0 / args.fps)).isoformat() if ts else "",
                 "t0": round(f0 / args.fps, 2), "t1": round((f1 + 1) / args.fps, 2),
                 "dwell": round((f1 - f0 + 1) / args.fps, 2),
                 "max_area": round(max(areas), 4), "mean_area": round(float(np.mean(areas)), 4),
+                "close_s": close_seconds(areas, args.fps),
                 "n": len(dets), "crops": crops, "ctx": ctx.relative_to(rel).as_posix(),
             })
     return out
@@ -199,32 +207,34 @@ def stage_tracks(args):
         return [c for c in args.cams if r.get("best", {}).get(f"person/{c}", {}).get("score", 0) > 0]
 
     results = {r["path"]: r for r in read_jsonl(out / "results.jsonl")}
-    todo_all = [Path(p) for p, r in results.items() if person_cams(r)]
+    todo_all = [p for p, r in results.items() if is_candidate(r, args.min_candidate) and person_cams(r)]
     tf = wd / (f"tracks-{i}.jsonl" if n > 1 else "tracks.jsonl")
     done = {r["path"] for f in wd.glob("tracks*.jsonl") for r in read_jsonl(f) if r.get("done")}
-    clips = [c for c in todo_all[i::n] if str(c) not in done]
+    clips = [Path(c) for c in todo_all[i::n] if c not in done]
     print(f"{len(clips)} clips to track ({len(done)} done, shard {i}/{n}) on {args.device}", file=sys.stderr)
 
     model = load_detector(args.model, args.device)
     hw = HWACCEL.get(args.device)
     pool = ThreadPoolExecutor(max_workers=2)
-    pending = [pool.submit(read_frames, c, args.fps, hw) for c in clips[:3]]
+    pending = [pool.submit(read_frames, resolve_clip(args.root, c.as_posix()), args.fps, hw) for c in clips[:3]]
     t0 = time.time()
     with tf.open("a", encoding="utf-8") as f:
         for k, clip in enumerate(clips, 1):
             fut = pending.pop(0)
             if k + 2 < len(clips):
-                pending.append(pool.submit(read_frames, clips[k + 2], args.fps, hw))
-            rows = []
+                pending.append(pool.submit(read_frames, resolve_clip(args.root, clips[k + 2].as_posix()), args.fps, hw))
+            rows, err = [], None
             try:
                 frames = fut.result()
                 if frames is not None:
-                    rows = clip_tracks(model, frames, clip, person_cams(results[str(clip)]), args, wd, out)
+                    rows = clip_tracks(model, frames, clip, person_cams(results[clip.as_posix()]), args, wd, out)
             except Exception as e:  # keep going on bad clips
                 print(f"{clip.name}: {e}", file=sys.stderr)
+                err = str(e)
             for r in rows:
                 f.write(json.dumps(r) + "\n")
-            f.write(json.dumps({"path": str(clip), "done": True, "tracks": len(rows)}) + "\n")
+            f.write(json.dumps({"path": clip.as_posix(), "done": True, "tracks": len(rows),
+                                **({"error": err} if err else {})}) + "\n")
             f.flush()
             rate = k / (time.time() - t0)
             print(f"[{k}/{len(clips)}] {clip.name} {len(rows)} tracks  {rate:.2f} clips/s  "
@@ -521,7 +531,7 @@ def stage_vlm(args):
 # ---------------------------------------------------------------- previews
 
 
-def make_preview(t, dest: Path, lead=2.0, tail=2.0):
+def make_preview(t, dest: Path, lead=2.0, tail=2.0, root: Path = Path(".")):
     """H.264 clip of just the camera the person was on, a couple of seconds either side of the walk-by.
 
     The sentry files are HEVC mosaics that most browsers can't play, so the page plays these instead.
@@ -531,7 +541,7 @@ def make_preview(t, dest: Path, lead=2.0, tail=2.0):
     _, x, y = next(c for c in CAMS if c[0] == t["cam"])
     start = max(t["t0"] - lead, 0.0)
     length = t["t1"] + tail - start  # ffmpeg stops at the end of the file
-    cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{length:.2f}", "-i", t["path"],
+    cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{length:.2f}", "-i", str(resolve_clip(root, t["path"])),
            "-vf", f"crop={QW}:{QH}:{x}:{y}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "27",
            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dest)]
     return subprocess.run(cmd, capture_output=True).returncode == 0 and dest.exists()
@@ -546,7 +556,7 @@ def stage_previews(args):
     print(f"{len(todo)} previews to make ({len(wanted) - len(todo)} done)", file=sys.stderr)
     done = 0
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        for ok in pool.map(lambda t: make_preview(t, wd / "preview" / f"{t['key']}.mp4"), todo):
+        for ok in pool.map(lambda t: make_preview(t, wd / "preview" / f"{t['key']}.mp4", root=args.root), todo):
             done += 1
             if done % 200 == 0 or done == len(todo):
                 print(f"[{done}/{len(todo)}]", file=sys.stderr)
@@ -666,8 +676,11 @@ def main():
     ap.add_argument("--drives", type=Path, nargs="*", default=[], help="Dashcam folders, to tag likely-you clips")
     ap.add_argument("--owner-window", type=float, default=3, help="Minutes around a drive to tag as likely you")
     ap.add_argument("--device", default="auto", help="auto (cuda > mps > cpu), cuda, mps, cpu")
+    ap.add_argument("--root", type=Path, default=Path("."), help="Scan root that result paths are relative to")
+    ap.add_argument("--min-candidate", type=float, default=NEAR,
+                    help="tracks stage: only clips where a confirmed person reached this closeness")
     ap.add_argument("--shard", default="0/1", help="tracks stage: i/n, to run n processes side by side")
-    ap.add_argument("--cams", nargs="*", default=["left", "rear", "right"], help="Cameras to track (fisheyes)")
+    ap.add_argument("--cams", nargs="*", default=DEFAULT_CAMS, help="Cameras to track (fisheyes)")
     ap.add_argument("--model", default="rfdetr:large", help="rfdetr:<size> or YOLO weights")
     ap.add_argument("--fps", type=float, default=4.0, help="Sampling rate for tracking")
     ap.add_argument("--conf", type=float, default=0.25)
