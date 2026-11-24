@@ -1,7 +1,10 @@
-"""Full pipeline: scan -> place fingerprints -> report. Works on macOS and Windows.
+"""Full pipeline: scan -> place fingerprints -> person tracks -> parked bike -> report. macOS and Windows.
 
     uv run python run.py "<...>/Electro/Sentry" --out output --drives "<...>/Electro/Dashcam"
+    uv run python run.py <root> --out batch --list batch.txt --device mps --no-report   # a daily batch
+    uv run python run.py <root> --out part-0 --list all.txt --shard 0/3 --no-report     # one of 3 processes
 
+Tracks and bikes only look at candidate clips (a confirmed person at closeness >= 0.06).
 Every step is resumable, so re-running the same command continues where it stopped.
 """
 
@@ -13,26 +16,49 @@ from pathlib import Path
 HERE = Path(__file__).parent
 
 
-def step(*args):
-    print(f"\n=== {' '.join(str(a) for a in args[:2])} ===", flush=True)
-    subprocess.run([sys.executable, *map(str, args)], cwd=HERE, check=True)
-
-
-def main():
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", type=Path, help="Sentry folder (e.g. Electro/Sentry)")
     ap.add_argument("--out", type=Path, default=Path("output"))
     ap.add_argument("--glob", default="**/*.mp4", help='e.g. "2025-*/**/*.mp4" for 2025 only')
+    ap.add_argument("--list", type=Path, help="File of clip paths relative to root (overrides --glob)")
+    ap.add_argument("--shard", default="0/1", help="i/n: this process scans every n-th clip starting at i")
+    ap.add_argument("--model", default="rfdetr:large", help="rfdetr:<size> or YOLO weights")
     ap.add_argument("--drives", type=Path, nargs="*", default=[],
                     help="Dashcam (driving) folders for likely-you tagging")
     ap.add_argument("--device", default="auto", help="auto (cuda > mps > cpu), cuda, mps, cpu")
-    args = ap.parse_args()
+    ap.add_argument("--no-report", action="store_true", help="Stop before building report.html")
+    return ap
 
-    out = args.out.resolve()
-    step("scan.py", args.root.resolve(), "--glob", args.glob, "--out", out, "--device", args.device)
-    step("places.py", out, "--device", args.device)
-    step("report.py", out, *(["--drives", *(d.resolve() for d in args.drives)] if args.drives else []))
-    print(f"\nDone. Open {out / 'report.html'}")
+
+def pipeline_steps(args) -> list[list[str]]:
+    root, out, dev, model = str(args.root), str(args.out), args.device, args.model
+    scan = ["scan.py", root, "--out", out, "--glob", args.glob, "--model", model, "--device", dev]
+    if args.list:
+        scan += ["--list", str(args.list)]
+    if args.shard != "0/1":
+        scan += ["--shard", args.shard]
+    steps = [
+        scan,
+        ["places.py", out, "--root", root, "--device", dev],
+        ["lurkers.py", out, "--root", root, "--stage", "tracks", "--model", model, "--device", dev],
+        ["bikes.py", out, "--root", root, "--stage", "scan", "--model", model, "--device", dev],
+    ]
+    if not args.no_report:
+        steps.append(["report.py", out, *(["--drives", *map(str, args.drives)] if args.drives else [])])
+    return steps
+
+
+def main():
+    args = build_parser().parse_args()
+    args.root, args.out = args.root.resolve(), args.out.resolve()
+    args.list = args.list.resolve() if args.list else None
+    args.drives = [d.resolve() for d in args.drives]
+    for step in pipeline_steps(args):
+        print(f"\n=== {' '.join(step[:2])} ===", flush=True)
+        subprocess.run([sys.executable, *step], cwd=HERE, check=True)
+    if not args.no_report:
+        print(f"\nDone. Open {args.out / 'report.html'}")
 
 
 if __name__ == "__main__":
