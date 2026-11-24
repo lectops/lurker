@@ -355,6 +355,20 @@ def drive_sessions(dirs, cache_path: Path):
     return sessions
 
 
+def load_sessions(path: Path):
+    """Drives as [start, end] from a TSV of ISO local times, one drive per line. Bad lines are skipped."""
+    if not path.exists():
+        return []
+    sessions = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            start, end = line.split("\t")
+            sessions.append([datetime.fromisoformat(start), datetime.fromisoformat(end)])
+        except ValueError:
+            continue
+    return sorted(sessions)
+
+
 def owner_tag(ts, sessions, window: timedelta):
     """'leaving' if a drive starts shortly after the clip, 'arriving' if one just ended."""
     for start, end in sessions:
@@ -389,12 +403,15 @@ def main():
     ap.add_argument("--min", type=float, default=0.06, help="Default closeness filter in the page")
     ap.add_argument("--drives", type=Path, nargs="*", default=[],
                     help="Dashcam (driving) folders, used to tag clips around your own departures/arrivals")
+    ap.add_argument("--sessions", type=Path, help="TSV of drives (start, end) for likely-you tagging")
     ap.add_argument("--owner-window", type=float, default=3, help="Minutes around a drive to tag as likely you")
     ap.add_argument("--fp-dims", type=int, default=128, help="Place fingerprint size in the page")
     ap.add_argument("--sim", type=float, default=0.75, help="Default place-match strictness")
     args = ap.parse_args()
 
     sessions = drive_sessions(args.drives, args.out / "drive_durations.json") if args.drives else []
+    if args.sessions:
+        sessions = sorted(sessions + load_sessions(args.sessions))
     window = timedelta(minutes=args.owner_window)
     fps = fingerprints(args.out, args.fp_dims)
 
