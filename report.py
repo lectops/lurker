@@ -242,11 +242,12 @@ function card({{d, p}}) {{
   return el;
 }}
 
-function render(resetPaging = true) {{
+function render(resetPaging = true, persist = true) {{
   if (resetPaging) shown = PAGE_SIZE;
   $("minv").textContent = (+$("min").value).toFixed(2);
   $("simv").textContent = (+$("simth").value).toFixed(2);
-  FILTERS.forEach(id => {{ const e = $(id); store("sentry-f-" + id, e.type === "checkbox" ? e.checked : e.value); }});
+  // an anchor link opens up the filters for one look; it must not overwrite the ones you saved
+  if (persist) FILTERS.forEach(id => {{ const e = $(id); store("sentry-f-" + id, e.type === "checkbox" ? e.checked : e.value); }});
   const rows = filtered();
   $("count").textContent = rows.length + " of " + DATA.length + " clips";
   const grid = $("grid"); grid.innerHTML = "";
@@ -345,7 +346,7 @@ function showAnchor() {{
   ["hide", "hideOwner", "alerted"].forEach(id => $(id).checked = false);
   const i = filtered().findIndex(r => r.d === d);
   shown = Math.max(PAGE_SIZE, i + 1);
-  render(false);
+  render(false, false);
   document.querySelectorAll(".card.target").forEach(e => e.classList.remove("target"));
   const el = document.getElementById(a);
   if (el) {{ el.classList.add("target"); el.scrollIntoView({{block: "start"}}); }}
