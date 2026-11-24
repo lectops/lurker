@@ -226,7 +226,9 @@ def stage_tracks(args):
             rows, err = [], None
             try:
                 frames = fut.result()
-                if frames is not None:
+                if frames is None:
+                    err = "no frames decoded"
+                else:
                     rows = clip_tracks(model, frames, clip, person_cams(results[clip.as_posix()]), args, wd, out)
             except Exception as e:  # keep going on bad clips
                 print(f"{clip.name}: {e}", file=sys.stderr)

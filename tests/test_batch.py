@@ -155,3 +155,15 @@ def test_merge_with_empty_places_in_batch(tmp_path, dirs):
     np.savez(b / "places.npz", paths=np.array([], dtype=str), emb=np.zeros((0, 0), np.float32))
     assert merge(b, o)["merged"] is True
     assert not (o / "places.npz").exists()
+
+
+def test_merge_turns_tracking_errors_into_scan_errors(tmp_path, dirs):
+    _, o = dirs
+    b = make_batch(tmp_path, results=[{"path": B, "best": {"person/rear": {"score": 0.2}}}, {"path": C, "best": {}}],
+                   tracks=[{"path": B, "done": True, "tracks": 0, "error": "No module named 'lap'"}],
+                   bikes=[{"path": C, "done": True, "bikes": 0, "error": "boom"}])
+    s = merge(b, o)
+    assert (s["scanned"], s["errors"]) == (2, 2)
+    rows = {r["path"]: r for r in read(o / "results.jsonl")}
+    assert rows[B]["error"] == "tracks: No module named 'lap'" and rows[C]["error"] == "bikes: boom"
+    assert done_paths(o) == set()  # both get their one retry

@@ -32,3 +32,22 @@ def test_tracking_error_is_recorded_on_the_done_row(tmp_path, monkeypatch):
     lurkers.stage_tracks(args)
     rows = [json.loads(l) for l in (out / "lurkers" / "tracks.jsonl").read_text().splitlines()]
     assert rows == [{"path": "2026-11/24/a.mp4", "done": True, "tracks": 0, "error": "boom"}]
+
+
+def test_clip_without_frames_is_recorded_as_an_error(tmp_path, monkeypatch):
+    import argparse
+    import json
+
+    import detector
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "results.jsonl").write_text(json.dumps(
+        {"path": "2026-11/24/a.mp4", "best": {"person/rear": {"score": 0.2}}}) + "\n")
+    monkeypatch.setattr(detector, "load_detector", lambda spec, device: None)
+    monkeypatch.setattr(lurkers, "read_frames", lambda *a: None)
+    args = argparse.Namespace(out=out, root=tmp_path, shard="0/1", cams=lurkers.DEFAULT_CAMS, min_candidate=0.06,
+                              model="x", device="cpu", fps=4.0)
+    lurkers.stage_tracks(args)
+    [row] = [json.loads(l) for l in (out / "lurkers" / "tracks.jsonl").read_text().splitlines()]
+    assert row["error"] == "no frames decoded"

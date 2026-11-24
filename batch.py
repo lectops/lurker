@@ -101,11 +101,20 @@ def merge(batch: Path, out: Path) -> dict:
         for f in (batch / d).glob("*") if (batch / d).is_dir() else []:
             (out / d).mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, out / d / f.name)
+    stage_errors = {}  # a clip whose tracking or bike stage failed is not done: it gets the scan's retry
     for sub, pattern, name in ROW_FILES:
         for f in sorted((batch / sub).glob(pattern)):
-            append_jsonl(out / sub / name, read_jsonl(f))
+            rows = read_jsonl(f)
+            for r in rows:
+                if r.get("done") and r.get("error"):
+                    stage = "tracks" if sub == "lurkers" else sub
+                    stage_errors.setdefault(r["path"], f"{stage}: {r['error']}")
+            append_jsonl(out / sub / name, rows)
     merge_places(batch, out)
     results = read_jsonl(batch / "results.jsonl")
+    for r in results:
+        if "error" not in r and r["path"] in stage_errors:
+            r["error"] = stage_errors[r["path"]]
     append_jsonl(out / "results.jsonl", results)
     with log.open("a", encoding="utf-8") as f:
         f.write(bid + "\n")

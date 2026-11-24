@@ -171,7 +171,9 @@ def stage_scan(args):
             rows, err = [], None
             try:
                 frames = fut.result()
-                if frames is not None:
+                if frames is None:
+                    err = "no frames decoded"
+                else:
                     rows = clip_rows(model, frames, clip, args.cams, args, wd)
             except Exception as e:
                 print(f"{clip.name}: {e}", file=sys.stderr)
