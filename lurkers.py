@@ -109,15 +109,10 @@ def detect_people(model, frames, cams, args):
             index.append((cam, fi))
     dets = {cam: [np.zeros((0, 6), np.float32)] * len(frames) for cam in cams}
     for i in range(0, len(crops), args.batch_frames):
-        results = model.predict(
-            crops[i : i + args.batch_frames], classes=[0], conf=args.conf, imgsz=args.imgsz,
-            device=args.device, half=args.device == "cuda", verbose=False,
-        )
-        for (cam, fi), r in zip(index[i : i + args.batch_frames], results):
-            if len(r.boxes):
-                dets[cam][fi] = np.concatenate(
-                    [r.boxes.xyxy.cpu().numpy(), r.boxes.conf.cpu().numpy()[:, None],
-                     r.boxes.cls.cpu().numpy()[:, None]], axis=1).astype(np.float32)
+        arrays = model.predict(crops[i : i + args.batch_frames], [0], args.conf, args.imgsz, args.batch_frames)
+        for (cam, fi), a in zip(index[i : i + args.batch_frames], arrays):
+            if len(a):
+                dets[cam][fi] = a
     return dets
 
 
@@ -196,7 +191,7 @@ def clip_tracks(model, frames, clip: Path, cams, args, wd: Path, rel: Path):
 
 
 def stage_tracks(args):
-    from ultralytics import YOLO
+    from detector import load_detector
 
     out, wd = args.out, work_dir(args.out)
     i, n = (int(v) for v in args.shard.split("/"))
@@ -210,7 +205,7 @@ def stage_tracks(args):
     clips = [c for c in todo_all[i::n] if str(c) not in done]
     print(f"{len(clips)} clips to track ({len(done)} done, shard {i}/{n}) on {args.device}", file=sys.stderr)
 
-    model = YOLO(args.model)
+    model = load_detector(args.model, args.device)
     hw = HWACCEL.get(args.device)
     pool = ThreadPoolExecutor(max_workers=2)
     pending = [pool.submit(read_frames, c, args.fps, hw) for c in clips[:3]]
@@ -673,7 +668,7 @@ def main():
     ap.add_argument("--device", default="auto", help="auto (cuda > mps > cpu), cuda, mps, cpu")
     ap.add_argument("--shard", default="0/1", help="tracks stage: i/n, to run n processes side by side")
     ap.add_argument("--cams", nargs="*", default=["left", "rear", "right"], help="Cameras to track (fisheyes)")
-    ap.add_argument("--model", default="yolo26m.pt")
+    ap.add_argument("--model", default="rfdetr:large", help="rfdetr:<size> or YOLO weights")
     ap.add_argument("--fps", type=float, default=4.0, help="Sampling rate for tracking")
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--track-seconds", type=float, default=3, help="How long ByteTrack keeps a lost track alive")

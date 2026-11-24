@@ -1,7 +1,7 @@
 """Scan BYD sentry clips for people close to the car.
 
 Each sentry frame is a 2x2 mosaic: left, rear / front, right.
-We sample frames with ffmpeg, split them into the four cameras, run YOLO
+We sample frames with ffmpeg, split them into the four cameras, run the detector
 on each, and record how big (= how close) the largest person and the
 largest *moving* vehicle got per camera. Results are appended to a JSONL file so runs can
 be resumed.
@@ -17,7 +17,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
+
+from detector import load_detector
 
 W, H = 1440, 1080
 QW, QH = W // 2, H // 2
@@ -68,7 +69,7 @@ def iou(a, b):
     return inter / (area(a) + area(b) - inter + 1e-9)
 
 
-def detect(model, frames, conf: float, imgsz: int, batch: int, device: str = "mps"):
+def detect(detector, frames, conf: float, imgsz: int, batch: int):
     """Return {cam: {kind: [(frame_idx, box, conf), ...]}} for every camera view."""
     crops, index = [], []
     for fi, frame in enumerate(frames):
@@ -77,16 +78,11 @@ def detect(model, frames, conf: float, imgsz: int, batch: int, device: str = "mp
             index.append((fi, cam))
     dets = {c: {k: [] for k in KINDS} for c, _, _ in CAMS}
     for i in range(0, len(crops), batch):
-        results = model.predict(
-            crops[i : i + batch], classes=[PERSON, *VEHICLES], conf=conf, imgsz=imgsz,
-            device=device, half=device == "cuda", verbose=False,
-        )
-        for (fi, cam), r in zip(index[i : i + batch], results):
-            if not len(r.boxes):
+        arrays = detector.predict(crops[i : i + batch], [PERSON, *VEHICLES], conf, imgsz, batch)
+        for (fi, cam), a in zip(index[i : i + batch], arrays):
+            if not len(a):
                 continue
-            xyxy = r.boxes.xyxy.cpu().numpy()
-            cls = r.boxes.cls.cpu().numpy().astype(int)
-            cf = r.boxes.conf.cpu().numpy()
+            xyxy, cf, cls = a[:, :4], a[:, 4], a[:, 5].astype(int)
             veh = np.isin(cls, VEHICLES)
             for j in np.flatnonzero(cls == PERSON):
                 # a "person" sitting on a vehicle box the model trusts as much is a misread car
@@ -163,7 +159,7 @@ def moving_vehicles(vdets, pdets, frames, cam: str, min_conf: float, min_motion:
 def scan_clip(model, frames, args):
     if frames is None:
         return None, None
-    dets = detect(model, frames, args.conf, args.imgsz, args.batch, args.device)
+    dets = detect(model, frames, args.conf, args.imgsz, args.batch)
     cams = {c: {k: {"max_area": 0.0, "frames": 0} for k in KINDS} for c, _, _ in CAMS}
     # best hit per "kind/camera", e.g. "vehicle/left"
     best = {f"{k}/{c}": {"score": 0.0} for k in KINDS for c, _, _ in CAMS}
@@ -198,7 +194,7 @@ def main():
     ap.add_argument("root", type=Path, help="Sentry folder (searched recursively)")
     ap.add_argument("--glob", default="**/*.mp4")
     ap.add_argument("--out", type=Path, default=Path("output"))
-    ap.add_argument("--model", default="yolo26m.pt")
+    ap.add_argument("--model", default="rfdetr:large", help="rfdetr:<size> or YOLO weights")
     ap.add_argument("--fps", type=float, default=2.0)
     ap.add_argument("--conf", type=float, default=0.25, help="Detector floor; boxes below are never seen")
     ap.add_argument("--person-conf", type=float, default=0.65,
@@ -228,7 +224,7 @@ def main():
         clips = clips[: args.limit]
     print(f"{len(clips)} clips to scan ({len(done)} already done) on {args.device}", file=sys.stderr)
 
-    model = YOLO(args.model)
+    model = load_detector(args.model, args.device)
     # decode upcoming clips in background threads while the GPU runs detection
     pool = ThreadPoolExecutor(max_workers=3)
     pending = [pool.submit(read_frames, c, args.fps, hwaccel) for c in clips[:4]]

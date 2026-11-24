@@ -64,15 +64,11 @@ def detect(model, frames, cams, args):
             index.append((cam, fi))
     dets = {cam: [np.zeros((0, 6), np.float32)] * len(frames) for cam in cams}
     for i in range(0, len(crops), args.batch_frames):
-        results = model.predict(
-            crops[i : i + args.batch_frames], classes=[PERSON, BICYCLE], conf=args.conf, imgsz=args.imgsz,
-            device=args.device, half=args.device == "cuda", verbose=False,
-        )
-        for (cam, fi), r in zip(index[i : i + args.batch_frames], results):
-            if len(r.boxes):
-                dets[cam][fi] = np.concatenate(
-                    [r.boxes.xyxy.cpu().numpy(), r.boxes.conf.cpu().numpy()[:, None],
-                     r.boxes.cls.cpu().numpy()[:, None]], axis=1).astype(np.float32)
+        arrays = model.predict(crops[i : i + args.batch_frames], [PERSON, BICYCLE], args.conf, args.imgsz,
+                               args.batch_frames)
+        for (cam, fi), a in zip(index[i : i + args.batch_frames], arrays):
+            if len(a):
+                dets[cam][fi] = a
     return dets
 
 
@@ -148,7 +144,7 @@ def clip_rows(model, frames, clip: Path, cams, args, wd: Path):
 
 
 def stage_scan(args):
-    from ultralytics import YOLO
+    from detector import load_detector
 
     out, wd = args.out, work_dir(args.out)
     i, n = (int(v) for v in args.shard.split("/"))
@@ -162,7 +158,7 @@ def stage_scan(args):
     todo = [c for c in clips[i::n] if str(c) not in done]
     print(f"{len(todo)} clips to scan ({len(done)} done, shard {i}/{n}) on {args.device}", file=sys.stderr)
 
-    model = YOLO(args.model)
+    model = load_detector(args.model, args.device)
     hw = HWACCEL.get(args.device)
     pool = ThreadPoolExecutor(max_workers=2)
     pending = [pool.submit(read_frames, c, args.fps, hw) for c in todo[:3]]
@@ -316,7 +312,7 @@ def main():
     ap.add_argument("--glob", default="", help="scan stage: only clips whose path matches this pattern")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--cams", nargs="*", default=["front", "rear"])
-    ap.add_argument("--model", default="yolo26m.pt")
+    ap.add_argument("--model", default="rfdetr:large", help="rfdetr:<size> or YOLO weights")
     ap.add_argument("--fps", type=float, default=2.0)
     ap.add_argument("--conf", type=float, default=0.25, help="Detector floor")
     ap.add_argument("--imgsz", type=int, default=640)
