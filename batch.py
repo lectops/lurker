@@ -71,6 +71,22 @@ def pending(archive: Path, out: Path, since: str, min_age_s: int, limit: int, no
     return todo[:limit] if limit else todo
 
 
+def replace_rows(path: Path, rows):
+    """Append rows to a JSONL file, first dropping any rows already there for the same clips. A run
+    that crashed mid-merge leaves a clip's tracks behind; the clip is scanned again and must not
+    end up with two sets."""
+    if not rows:
+        return
+    clips = {r["path"] for r in rows}
+    old = read_jsonl(path)
+    if any(r.get("path") in clips for r in old):
+        tmp = path.with_suffix(".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write("".join(json.dumps(r) + "\n" for r in old if r.get("path") not in clips))
+        tmp.replace(path)
+    append_jsonl(path, rows)
+
+
 def merge_places(batch: Path, out: Path):
     src = batch / "places.npz"
     if not src.exists():
@@ -103,13 +119,12 @@ def merge(batch: Path, out: Path) -> dict:
             shutil.copy2(f, out / d / f.name)
     stage_errors = {}  # a clip whose tracking or bike stage failed is not done: it gets the scan's retry
     for sub, pattern, name in ROW_FILES:
-        for f in sorted((batch / sub).glob(pattern)):
-            rows = read_jsonl(f)
-            for r in rows:
-                if r.get("done") and r.get("error"):
-                    stage = "tracks" if sub == "lurkers" else sub
-                    stage_errors.setdefault(r["path"], f"{stage}: {r['error']}")
-            append_jsonl(out / sub / name, rows)
+        rows = [r for f in sorted((batch / sub).glob(pattern)) for r in read_jsonl(f)]
+        for r in rows:
+            if r.get("done") and r.get("error"):
+                stage = "tracks" if sub == "lurkers" else sub
+                stage_errors.setdefault(r["path"], f"{stage}: {r['error']}")
+        replace_rows(out / sub / name, rows)
     merge_places(batch, out)
     results = read_jsonl(batch / "results.jsonl")
     for r in results:

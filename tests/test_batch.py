@@ -167,3 +167,19 @@ def test_merge_turns_tracking_errors_into_scan_errors(tmp_path, dirs):
     rows = {r["path"]: r for r in read(o / "results.jsonl")}
     assert rows[B]["error"] == "tracks: No module named 'lap'" and rows[C]["error"] == "bikes: boom"
     assert done_paths(o) == set()  # both get their one retry
+
+
+def test_merge_replaces_earlier_rows_for_the_same_clip(tmp_path, dirs):
+    # a run that crashed mid-merge left B's tracks behind; B is scanned again and merged again
+    _, o = dirs
+    rows(o / "lurkers" / "tracks.jsonl", {"key": "a", "path": A}, {"path": A, "done": True},
+         {"key": "old", "path": B}, {"path": B, "done": True})
+    rows(o / "bikes" / "bikes.jsonl", {"path": B, "done": True, "bikes": 0}, {"path": A, "done": True, "bikes": 0})
+    b = make_batch(tmp_path, results=[{"path": B, "best": {}}],
+                   tracks=[{"key": "new", "path": B}, {"path": B, "done": True}],
+                   bikes=[{"path": B, "done": True, "bikes": 1}])
+    merge(b, o)
+    assert read(o / "lurkers" / "tracks.jsonl") == [
+        {"key": "a", "path": A}, {"path": A, "done": True}, {"key": "new", "path": B}, {"path": B, "done": True}]
+    assert read(o / "bikes" / "bikes.jsonl") == [
+        {"path": A, "done": True, "bikes": 0}, {"path": B, "done": True, "bikes": 1}]
