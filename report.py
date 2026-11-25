@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import html
 import json
 import re
 import subprocess
@@ -118,6 +119,7 @@ button.on {{ border-color:var(--accent); color:var(--accent); }}
   <button id="sheetDone">Done</button>
   </div>
 </header>
+{failed}
 <main id="grid"></main>
 <script>
 const DATA = {data};
@@ -491,6 +493,29 @@ def build_rows(out: Path, sessions, window: timedelta, clip_prefix: str, fps: di
     return rows
 
 
+def failed_clips(out: Path, clip_prefix: str) -> list[dict]:
+    """Clips given up on: two failed attempts and no good result (the daily job's rule, batch.py)."""
+    errors, good = {}, set()
+    for r in read_jsonl(out / "results.jsonl"):
+        if "error" in r:
+            errors.setdefault(r["path"], []).append(r["error"])
+        else:
+            good.add(r["path"])
+    return [{"path": p, "name": Path(p).name, "url": clip_prefix + p, "error": e[-1]}
+            for p, e in sorted(errors.items()) if len(e) >= 2 and p not in good]
+
+
+def failed_html(failed: list[dict]) -> str:
+    """A collapsed list above the clips, so a clip the scanner gave up on is not silently missing."""
+    if not failed:
+        return ""
+    n = len(failed)
+    items = "".join(f'<li><a href="{html.escape(f["url"])}">{html.escape(f["name"])}</a>: {html.escape(f["error"])}</li>'
+                    for f in failed)
+    return (f'<details class="failed" style="margin:8px 16px"><summary>{n} clip{"s" if n != 1 else ""} '
+            f'could not be scanned</summary><ul>{items}</ul></details>')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out", type=Path, help="Output folder from scan.py")
@@ -513,6 +538,7 @@ def main():
     rows = build_rows(args.out, sessions, window, args.clip_prefix, fps)
 
     page = PAGE.format(data=json.dumps(rows), has_fp=json.dumps(bool(fps)),
+                       failed=failed_html(failed_clips(args.out, args.clip_prefix)),
                        default_min=args.min, default_sim=args.sim)
     out = args.out / "report.html"
     out.write_text(page, encoding="utf-8")

@@ -6,6 +6,9 @@
     python batch.py merge BATCH OUT
         append a batch output (from run.py --no-report) to the canonical output OUT; prints a JSON summary
 
+    python batch.py requeue OUT PATH...
+        forget the failed attempts of these clips, so the next run scans them again
+
 A clip counts as scanned once it has a result without an error, or two results with one: a clip whose
 scan failed is retried once, then left alone.
 """
@@ -141,6 +144,18 @@ def merge(batch: Path, out: Path) -> dict:
             "gave_up": [p for p in failed if p in done and p not in good]}
 
 
+def requeue(out: Path, paths) -> int:
+    """Drop the error rows of these clips from results.jsonl (good rows stay); returns how many."""
+    wanted, f = set(paths), out / "results.jsonl"
+    old = read_jsonl(f)
+    keep = [r for r in old if not ("error" in r and r["path"] in wanted)]
+    if len(keep) != len(old):
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text("".join(json.dumps(r) + "\n" for r in keep), encoding="utf-8")
+        tmp.replace(f)
+    return len(old) - len(keep)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -153,10 +168,15 @@ def main():
     m = sub.add_parser("merge")
     m.add_argument("batch", type=Path)
     m.add_argument("out", type=Path)
+    q = sub.add_parser("requeue")
+    q.add_argument("out", type=Path)
+    q.add_argument("paths", nargs="+", help="Clip paths as in results.jsonl, e.g. 2026-11/24/<name>.mp4")
     args = ap.parse_args()
     if args.cmd == "pending":
         for rel in pending(args.archive, args.out, args.since, args.min_age, args.limit, time.time()):
             print(rel)
+    elif args.cmd == "requeue":
+        print(f"dropped {requeue(args.out, args.paths)} failed attempt(s); the next run scans these clips again")
     else:
         summary = merge(args.batch, args.out)
         print(json.dumps(summary))

@@ -183,3 +183,15 @@ def test_merge_replaces_earlier_rows_for_the_same_clip(tmp_path, dirs):
         {"key": "a", "path": A}, {"path": A, "done": True}, {"key": "new", "path": B}, {"path": B, "done": True}]
     assert read(o / "bikes" / "bikes.jsonl") == [
         {"path": A, "done": True, "bikes": 0}, {"path": B, "done": True, "bikes": 1}]
+
+
+def test_requeue_drops_a_clips_error_rows_so_it_is_pending_again(tmp_path, dirs):
+    from batch import requeue
+    a, o = dirs
+    clip(a, A)
+    clip(a, B)
+    rows(o / "results.jsonl", {"path": A, "error": "x"}, {"path": A, "error": "y"}, {"path": B, "best": {}})
+    assert pending(a, o, "2026-11", 600, 0, NOW) == []
+    assert requeue(o, [A, B]) == 2  # B's good row is kept
+    assert pending(a, o, "2026-11", 600, 0, NOW) == [A]
+    assert read(o / "results.jsonl") == [{"path": B, "best": {}}]

@@ -51,3 +51,21 @@ def test_likely_you_from_sessions(tmp_path):
     s = [[datetime(2026, 11, 24, 13, 30), datetime(2026, 11, 24, 14, 1)]]
     [row] = build_rows(out_with(tmp_path, GOOD), s, timedelta(minutes=3), "", {})
     assert row["owner"] == "arriving"
+
+
+def test_given_up_clips_are_listed_with_their_last_error(tmp_path):
+    from report import failed_clips
+    Q = "2026-11/24/2026-11-24_15h00m00s_Q.mp4"
+    R = "2026-11/24/2026-11-24_16h00m00s_R.mp4"
+    out = out_with(tmp_path, GOOD, {"path": Q, "error": "no frames decoded"}, {"path": Q, "error": "tracks: boom"},
+                   {"path": R, "error": "x"})  # R failed once: it is retried, not given up
+    assert failed_clips(out, "clips/") == [
+        {"path": Q, "name": "2026-11-24_15h00m00s_Q.mp4", "url": "clips/" + Q, "error": "tracks: boom"}]
+
+
+def test_failed_section_lists_clips_escaped_and_is_empty_without_any():
+    from report import failed_html
+    assert failed_html([]) == ""
+    html = failed_html([{"path": "a", "name": "a<b>.mp4", "url": "clips/a", "error": "x & y"}])
+    assert "1 clip could not be scanned" in html and "a&lt;b&gt;.mp4" in html and "x &amp; y" in html
+    assert 'href="clips/a"' in html
