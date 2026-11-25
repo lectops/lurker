@@ -1,12 +1,12 @@
 """Which scanned clips deserve a Telegram alert. Runs on the archive host with only numpy installed.
 
-    python alerts.py OUT --paths batch.txt [--sessions drives.tsv] [--walkup-seconds 5]
+    python alerts.py OUT --paths batch.txt [--sessions drives.tsv] [--walkup-seconds 4]
 
 Prints one JSON object per alerting clip, oldest first. A clip alerts when a person (not tagged
 "likely you", i.e. within a few minutes of one of your drives) did one of these, checked in order:
 
   walkup  stood at closeness >= 0.15 for WALKUP_SECONDS or longer (a walk-by is over in a moment)
-  linger  was in view 10+ s and got to closeness >= 0.06 (lurkers.py's definition)
+  linger  was in view 10+ s at an average closeness >= 0.06 (stayed near the car, not just passed it)
   bike    came close to the parked bike (bikes.py)
 
 Passers-by, however close, only go on the review page.
@@ -22,7 +22,7 @@ from report import load_sessions, owner_tag, parse_ts
 NEAR = 0.06
 HOT = 0.15
 LINGER_SECONDS = 10
-WALKUP_SECONDS = 5.0  # provisional; tuned on past clips before launch
+WALKUP_SECONDS = 4.0  # tuned 2026-11 on 305 past clips: 3-4 s is mostly walk-bys, 4-5 s people at the car
 
 
 def read_jsonl(path: Path):
@@ -47,9 +47,10 @@ def clip_alert(rel: str, tracks: list[dict], bikes: list[dict], walkup_s: float)
     if walkups:
         t = max(walkups, key=lambda t: t["max_area"])
         return from_track("walkup", t, t["close_s"])
-    lingers = [t for t in tracks if t["dwell"] >= LINGER_SECONDS and t["max_area"] >= NEAR]
+    # mean, not max: someone crossing a car park is in view 10+ s but close only for a moment
+    lingers = [t for t in tracks if t["dwell"] >= LINGER_SECONDS and t["mean_area"] >= NEAR]
     if lingers:
-        t = max(lingers, key=lambda t: t["max_area"])
+        t = max(lingers, key=lambda t: t["mean_area"])
         return from_track("linger", t, t["dwell"])
     if bikes:
         b = min(bikes, key=lambda b: b["near"]["min_gap"])

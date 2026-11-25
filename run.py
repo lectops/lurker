@@ -49,6 +49,18 @@ def pipeline_steps(args) -> list[list[str]]:
     return steps
 
 
+def run_step(step: list[str], run=subprocess.run):
+    """Run one step; retry once if the OS killed it (macOS has SIGKILLed the MPS tracker under memory
+    pressure). Every step resumes where it stopped, so the retry only redoes the clip in progress."""
+    for attempt in (1, 2):
+        rc = run([sys.executable, *step], cwd=HERE).returncode
+        if rc == 0:
+            return
+        if rc > 0 or attempt == 2:
+            raise subprocess.CalledProcessError(rc, step)
+        print(f"{step[0]} killed by signal {-rc}, retrying once", file=sys.stderr, flush=True)
+
+
 def main():
     args = build_parser().parse_args()
     args.root, args.out = args.root.resolve(), args.out.resolve()
@@ -56,7 +68,7 @@ def main():
     args.drives = [d.resolve() for d in args.drives]
     for step in pipeline_steps(args):
         print(f"\n=== {' '.join(step[:2])} ===", flush=True)
-        subprocess.run([sys.executable, *step], cwd=HERE, check=True)
+        run_step(step)
     if not args.no_report:
         print(f"\nDone. Open {args.out / 'report.html'}")
 

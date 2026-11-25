@@ -7,7 +7,7 @@ P = "2026-11/24/2026-11-24_14h03m00s_X.mp4"
 
 
 def T(**kw):
-    return {"key": "k", "path": P, "cam": "rear", "dwell": 3.0, "max_area": 0.2, "close_s": 1.0,
+    return {"key": "k", "path": P, "cam": "rear", "dwell": 3.0, "max_area": 0.2, "mean_area": 0.1, "close_s": 1.0,
             "ctx": "lurkers/ctx/k.jpg", **kw}
 
 
@@ -16,7 +16,7 @@ def test_walk_by_does_not_alert():
 
 
 def test_linger_alerts():
-    a = clip_alert(P, [T(dwell=10.0, max_area=0.06, close_s=0.0)], [], WALKUP_SECONDS)
+    a = clip_alert(P, [T(dwell=10.0, max_area=0.06, mean_area=0.06, close_s=0.0)], [], WALKUP_SECONDS)
     assert (a["reason"], a["seconds"], a["closeness"], a["snapshot"], a["cam"], a["path"]) == (
         "linger", 10.0, 0.06, "lurkers/ctx/k.jpg", "rear", P)
 
@@ -26,7 +26,16 @@ def test_linger_needs_ten_seconds():
 
 
 def test_linger_needs_closeness():
-    assert clip_alert(P, [T(dwell=60.0, max_area=0.059, close_s=0)], [], WALKUP_SECONDS) is None
+    assert clip_alert(P, [T(dwell=60.0, max_area=0.2, mean_area=0.059, close_s=0)], [], WALKUP_SECONDS) is None
+
+
+def test_linger_passing_close_once_does_not_alert():
+    # in view a long time but near the car only for a moment: someone crossing the car park (2026-11 tuning)
+    assert clip_alert(P, [T(dwell=30.0, max_area=0.3, mean_area=0.03, close_s=0.5)], [], WALKUP_SECONDS) is None
+
+
+def test_walkup_cutoff_is_the_tuned_four_seconds():
+    assert WALKUP_SECONDS == 4.0
 
 
 def test_walkup_at_cutoff():
